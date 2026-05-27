@@ -1,0 +1,8 @@
+option('reader', type: 'feature', value: 'enabled')
+option('writer', type: 'feature', value: 'enabled')
+option('incr-reader', type: 'feature', value: 'enabled')
+option('utils', type: 'feature', value: 'enabled')
+option('fast-fp-conv', type: 'feature', value: 'enabled')
+option('non-standard-json', type: 'feature', value: 'enabled')
+option('utf8-validation', type: 'feature', value: 'enabled')
+option('unaligned-memory-access', type: 'feature', value: 'enabled')

@@ -1,0 +1,5 @@
+option('native', type: 'feature', value: 'auto', description: 'Build the SDL3 desktop target')
+option('tui', type: 'feature', value: 'auto', description: 'Build the termbox2 terminal target')
+option('web', type: 'feature', value: 'auto', description: 'Build the WebAssembly HTML target')
+option('server', type: 'feature', value: 'auto', description: 'Build the facil.io HTTP server target')
+option('wasm_cc', type: 'string', value: 'clang', description: 'C compiler used for the WebAssembly target')

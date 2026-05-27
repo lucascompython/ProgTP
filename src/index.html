@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ProgTP Clay</title>
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: rgb(28, 31, 36);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        #root {
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+        }
+
+        .clay-node {
+            position: absolute;
+            box-sizing: border-box;
+            left: 0;
+            top: 0;
+        }
+
+        .clay-text {
+            white-space: pre;
+            line-height: 1.15;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module">
+        const COMMAND_NONE = 0;
+        const COMMAND_RECTANGLE = 1;
+        const COMMAND_BORDER = 2;
+        const COMMAND_TEXT = 3;
+        const COMMAND_SCISSOR_START = 5;
+        const COMMAND_SCISSOR_END = 6;
+
+        const offsets = {
+            x: 0,
+            y: 4,
+            width: 8,
+            height: 12,
+            r: 16,
+            g: 20,
+            b: 24,
+            a: 28,
+            radiusTopLeft: 32,
+            radiusTopRight: 36,
+            radiusBottomLeft: 40,
+            radiusBottomRight: 44,
+            textPointer: 48,
+            textLength: 52,
+            id: 56,
+            fontSize: 60,
+            borderLeft: 64,
+            borderRight: 68,
+            borderTop: 72,
+            borderBottom: 76,
+            type: 80,
+        };
+
+        const root = document.getElementById("root");
+        const decoder = new TextDecoder("utf-8");
+        const encoder = new TextEncoder();
+        const elements = new Map();
+
+        let instance;
+        let memory;
+        let view;
+        let commandBuffer = 0;
+        let commandSize = 0;
+        let labelBuffer = 0;
+        let labelCapacity = 0;
+        let previousFrameTime = performance.now();
+        let mouseX = 0;
+        let mouseY = 0;
+        let wheelX = 0;
+        let wheelY = 0;
+        let mouseDown = false;
+        let touchDown = false;
+
+        function rgba(commandAddress) {
+            const r = view.getFloat32(commandAddress + offsets.r, true);
+            const g = view.getFloat32(commandAddress + offsets.g, true);
+            const b = view.getFloat32(commandAddress + offsets.b, true);
+            const a = view.getFloat32(commandAddress + offsets.a, true) / 255;
+            return `rgba(${r}, ${g}, ${b}, ${a})`;
+        }
+
+        function readCommand(commandAddress) {
+            return {
+                x: view.getFloat32(commandAddress + offsets.x, true),
+                y: view.getFloat32(commandAddress + offsets.y, true),
+                width: view.getFloat32(commandAddress + offsets.width, true),
+                height: view.getFloat32(commandAddress + offsets.height, true),
+                radiusTopLeft: view.getFloat32(commandAddress + offsets.radiusTopLeft, true),
+                radiusTopRight: view.getFloat32(commandAddress + offsets.radiusTopRight, true),
+                radiusBottomLeft: view.getFloat32(commandAddress + offsets.radiusBottomLeft, true),
+                radiusBottomRight: view.getFloat32(commandAddress + offsets.radiusBottomRight, true),
+                textPointer: view.getUint32(commandAddress + offsets.textPointer, true),
+                textLength: view.getUint32(commandAddress + offsets.textLength, true),
+                id: view.getUint32(commandAddress + offsets.id, true),
+                fontSize: view.getUint32(commandAddress + offsets.fontSize, true),
+                borderLeft: view.getUint32(commandAddress + offsets.borderLeft, true),
+                borderRight: view.getUint32(commandAddress + offsets.borderRight, true),
+                borderTop: view.getUint32(commandAddress + offsets.borderTop, true),
+                borderBottom: view.getUint32(commandAddress + offsets.borderBottom, true),
+                type: view.getUint32(commandAddress + offsets.type, true),
+                color: rgba(commandAddress),
+            };
+        }
+
+        function setBox(element, command) {
+            element.style.transform = `translate(${Math.round(command.x)}px, ${Math.round(command.y)}px)`;
+            element.style.width = `${Math.round(command.width)}px`;
+            element.style.height = `${Math.round(command.height)}px`;
+        }
+
+        function setRadius(element, command) {
+            element.style.borderTopLeftRadius = `${command.radiusTopLeft}px`;
+            element.style.borderTopRightRadius = `${command.radiusTopRight}px`;
+            element.style.borderBottomLeftRadius = `${command.radiusBottomLeft}px`;
+            element.style.borderBottomRightRadius = `${command.radiusBottomRight}px`;
+        }
+
+        function getElement(key, command) {
+            let element = elements.get(key);
+            if (!element) {
+                element = document.createElement("div");
+                element.className = "clay-node";
+                elements.set(key, element);
+                root.appendChild(element);
+            }
+            element.dataset.live = "true";
+            element.style.display = command.type === COMMAND_NONE ? "none" : "block";
+            return element;
+        }
+
+        function renderCommands(count) {
+            for (const element of elements.values()) {
+                element.dataset.live = "false";
+            }
+
+            for (let i = 0; i < count; ++i) {
+                const address = commandBuffer + i * commandSize;
+                const command = readCommand(address);
+                if (command.type === COMMAND_SCISSOR_START || command.type === COMMAND_SCISSOR_END) {
+                    continue;
+                }
+
+                const key = `${i}:${command.id}:${command.type}`;
+                const element = getElement(key, command);
+                setBox(element, command);
+
+                if (command.type === COMMAND_RECTANGLE) {
+                    element.className = "clay-node";
+                    element.textContent = "";
+                    element.style.background = command.color;
+                    element.style.border = "0";
+                    setRadius(element, command);
+                } else if (command.type === COMMAND_BORDER) {
+                    element.className = "clay-node";
+                    element.textContent = "";
+                    element.style.background = "transparent";
+                    element.style.borderLeft = `${command.borderLeft}px solid ${command.color}`;
+                    element.style.borderRight = `${command.borderRight}px solid ${command.color}`;
+                    element.style.borderTop = `${command.borderTop}px solid ${command.color}`;
+                    element.style.borderBottom = `${command.borderBottom}px solid ${command.color}`;
+                    setRadius(element, command);
+                } else if (command.type === COMMAND_TEXT) {
+                    const bytes = new Uint8Array(memory.buffer, command.textPointer, command.textLength);
+                    element.className = "clay-node clay-text";
+                    element.style.background = "transparent";
+                    element.style.border = "0";
+                    element.style.color = command.color;
+                    element.style.fontSize = `${command.fontSize}px`;
+                    element.style.fontFamily = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+                    element.textContent = decoder.decode(bytes);
+                }
+            }
+
+            for (const [key, element] of elements) {
+                if (element.dataset.live !== "true") {
+                    element.remove();
+                    elements.delete(key);
+                }
+            }
+        }
+
+        function setSharedLabel(value) {
+            const bytes = encoder.encode(value);
+            const output = new Uint8Array(memory.buffer);
+            const length = Math.min(bytes.length, labelCapacity - 1);
+            output.set(bytes.subarray(0, length), labelBuffer);
+            output[labelBuffer + length] = 0;
+        }
+
+        async function loadCommandLabel() {
+            try {
+                const response = await fetch("/api/hello");
+                if (!response.ok) {
+                    setSharedLabel("web: server unavailable");
+                    return;
+                }
+                const data = await response.json();
+                setSharedLabel(`${data.mode}: ${data.message}`);
+            } catch {
+                setSharedLabel("web: server unavailable");
+            }
+        }
+
+        function renderLoop(currentTime) {
+            const deltaTime = (currentTime - previousFrameTime) / 1000;
+            previousFrameTime = currentTime;
+            const count = instance.exports.UpdateDrawFrame(
+                window.innerWidth,
+                window.innerHeight,
+                wheelX,
+                wheelY,
+                mouseX,
+                mouseY,
+                touchDown,
+                mouseDown,
+                deltaTime);
+            wheelX = 0;
+            wheelY = 0;
+            renderCommands(count);
+            requestAnimationFrame(renderLoop);
+        }
+
+        function installInputHandlers() {
+            window.addEventListener("mousemove", event => {
+                mouseX = event.clientX;
+                mouseY = event.clientY;
+            });
+            window.addEventListener("mousedown", () => {
+                mouseDown = true;
+            });
+            window.addEventListener("mouseup", () => {
+                mouseDown = false;
+            });
+            window.addEventListener("wheel", event => {
+                wheelX += event.deltaX * -0.1;
+                wheelY += event.deltaY * -0.1;
+            }, { passive: true });
+            window.addEventListener("touchstart", event => {
+                touchDown = true;
+                if (event.changedTouches.length > 0) {
+                    mouseX = event.changedTouches[0].clientX;
+                    mouseY = event.changedTouches[0].clientY;
+                }
+            }, { passive: true });
+            window.addEventListener("touchmove", event => {
+                if (event.changedTouches.length > 0) {
+                    mouseX = event.changedTouches[0].clientX;
+                    mouseY = event.changedTouches[0].clientY;
+                }
+            }, { passive: true });
+            window.addEventListener("touchend", () => {
+                touchDown = false;
+            }, { passive: true });
+        }
+
+        async function init() {
+            const response = await fetch("./index.wasm");
+            const wasm = await WebAssembly.instantiate(await response.arrayBuffer(), {});
+            instance = wasm.instance;
+            memory = instance.exports.memory;
+            view = new DataView(memory.buffer);
+            commandBuffer = instance.exports.GetWebCommandBuffer();
+            commandSize = instance.exports.GetWebCommandSize();
+            labelBuffer = instance.exports.GetCommandLabelBuffer();
+            labelCapacity = instance.exports.GetCommandLabelCapacity();
+            installInputHandlers();
+            loadCommandLabel();
+            requestAnimationFrame(renderLoop);
+        }
+
+        init();
+    </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://github.com/libsdl-org/SDL_ttf.git
+revision = head
+depth = 1
+patch_directory = sdl3_ttf
+
+[provide]
+sdl3_ttf = sdl3_ttf_dep
