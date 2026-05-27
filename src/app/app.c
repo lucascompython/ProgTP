@@ -4,8 +4,8 @@
 #include <stdio.h>
 #endif
 
-static uint32_t CStringLength(const char *value) {
-    uint32_t length = 0;
+static int32_t CStringLength(const char *value) {
+    int32_t length = 0;
     while (value[length] != '\0') {
         ++length;
     }
@@ -53,14 +53,19 @@ Clay_RenderCommandArray ProgTP_BuildHelloWorldLayout(const char *target_name, fl
             .cornerRadius = CLAY_CORNER_RADIUS(8),
             .border = {
                 .color = COLOR_ACCENT,
-                .width = { 2, 2, 2, 2 },
+                .width = {
+                    .left = 2,
+                    .right = 2,
+                    .top = 2,
+                    .bottom = 2,
+                },
             },
         }) {
             CLAY_TEXT(CLAY_STRING("Hello from Clay"), CLAY_TEXT_CONFIG({
                 .fontSize = 30,
                 .textColor = COLOR_TEXT,
             }));
-            CLAY_TEXT(CLAY_STRING("Two shared C layout, three renderers."), CLAY_TEXT_CONFIG({
+            CLAY_TEXT(CLAY_STRING("One shared C layout, three renderers."), CLAY_TEXT_CONFIG({
                 .fontSize = 18,
                 .textColor = COLOR_MUTED,
             }));

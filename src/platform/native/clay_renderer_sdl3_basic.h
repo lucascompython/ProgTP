@@ -8,9 +8,41 @@
 
 typedef struct {
     SDL_Renderer *renderer;
-    TTF_TextEngine *textEngine;
-    TTF_Font **fonts;
+    const char *fontPath;
+    TTF_Font *fontCache[128];
 } Clay_SDL3RendererData;
+
+static uint32_t ProgTP_SDL3_ClampFontSize(uint32_t fontSize) {
+    if (fontSize == 0) {
+        return 1;
+    }
+    if (fontSize >= 128) {
+        return 127;
+    }
+    return fontSize;
+}
+
+static TTF_Font *ProgTP_SDL3_GetFont(Clay_SDL3RendererData *rendererData, uint32_t fontSize) {
+    uint32_t cacheIndex = ProgTP_SDL3_ClampFontSize(fontSize);
+    TTF_Font *font = rendererData->fontCache[cacheIndex];
+    if (!font && rendererData->fontPath) {
+        font = TTF_OpenFont(rendererData->fontPath, (float)cacheIndex);
+        if (font) {
+            TTF_SetFontHinting(font, TTF_HINTING_NORMAL);
+            rendererData->fontCache[cacheIndex] = font;
+        }
+    }
+    return font;
+}
+
+static void ProgTP_SDL3_CloseFonts(Clay_SDL3RendererData *rendererData) {
+    for (size_t i = 0; i < SDL_arraysize(rendererData->fontCache); ++i) {
+        if (rendererData->fontCache[i]) {
+            TTF_CloseFont(rendererData->fontCache[i]);
+            rendererData->fontCache[i] = NULL;
+        }
+    }
+}
 
 static SDL_FRect ProgTP_SDL3_RectFromClay(Clay_BoundingBox box) {
     return (SDL_FRect){
@@ -86,26 +118,35 @@ static void SDL_Clay_RenderClayCommands(Clay_SDL3RendererData *rendererData, Cla
 
             case CLAY_RENDER_COMMAND_TYPE_TEXT: {
                 Clay_TextRenderData *config = &command->renderData.text;
-                TTF_Font *font = rendererData->fonts[config->fontId];
-                if (!font || !rendererData->textEngine) {
+                TTF_Font *font = ProgTP_SDL3_GetFont(rendererData, config->fontSize);
+                if (!font) {
                     break;
                 }
 
-                TTF_SetFontSize(font, config->fontSize);
-                TTF_Text *text = TTF_CreateText(
-                    rendererData->textEngine,
+                SDL_Surface *surface = TTF_RenderText_Blended(
                     font,
                     config->stringContents.chars,
-                    (size_t)config->stringContents.length);
-                if (text) {
-                    TTF_SetTextColor(
-                        text,
+                    (size_t)config->stringContents.length,
+                    (SDL_Color){
                         (Uint8)config->textColor.r,
                         (Uint8)config->textColor.g,
                         (Uint8)config->textColor.b,
-                        (Uint8)config->textColor.a);
-                    TTF_DrawRendererText(text, rect.x, rect.y);
-                    TTF_DestroyText(text);
+                        (Uint8)config->textColor.a,
+                    });
+                if (surface) {
+                    SDL_Texture *texture = SDL_CreateTextureFromSurface(rendererData->renderer, surface);
+                    if (texture) {
+                        SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+                        SDL_FRect destination = {
+                            .x = rect.x,
+                            .y = rect.y,
+                            .w = (float)surface->w,
+                            .h = (float)surface->h,
+                        };
+                        SDL_RenderTexture(rendererData->renderer, texture, NULL, &destination);
+                        SDL_DestroyTexture(texture);
+                    }
+                    SDL_DestroySurface(surface);
                 }
                 break;
             }

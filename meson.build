@@ -8,16 +8,37 @@ project(
 
 cmake = import('cmake')
 fs = import('fs')
+cc = meson.get_compiler('c')
+
+project_warnings = cc.get_supported_arguments([
+    '-Wshadow',
+    '-Wformat=2',
+    '-Wundef',
+    '-Wstrict-prototypes',
+    '-Wall',
+    '-Wextra',
+    '-Wpedantic'
+])
+add_project_arguments(project_warnings, language: 'c')
+server_warning_suppressions = cc.get_supported_arguments(['-Wno-unused-function'])
+
+src_inc = include_directories(
+    'src',
+    'src/app',
+    'src/client',
+    'src/protocol',
+)
 
 clay_sp = subproject('clay')
-clay_dep = clay_sp.get_variable('clay_dep')
+clay_dep = clay_sp.get_variable('clay_dep').as_system('system')
 clay_root = clay_sp.get_variable('clay_root')
 
-common_sources = files('src/app.c')
+common_sources = files('src/app/app.c')
 common_deps = [clay_dep]
 platform_targets = []
-protocol_sources = files('src/protocol.c')
-client_sources = files('src/command_client.c')
+protocol_sources = files('src/protocol/protocol.c')
+client_sources = files('src/client/command_client.c')
+lint_sources = common_sources + protocol_sources
 
 native_opt = get_option('native')
 tui_opt = get_option('tui')
@@ -27,16 +48,21 @@ server_opt = get_option('server')
 needs_client_runtime = not native_opt.disabled() or not tui_opt.disabled()
 needs_json = needs_client_runtime or not server_opt.disabled()
 
+if needs_client_runtime
+    lint_sources += client_sources
+endif
+
 if needs_json
     yyjson_sp = subproject(
         'yyjson',
         default_options: [
+            'warning_level=0',
             'incr-reader=disabled',
             'utils=disabled',
             'non-standard-json=disabled',
         ],
     )
-    yyjson_dep = yyjson_sp.get_variable('yyjson_dep')
+    yyjson_dep = yyjson_sp.get_variable('yyjson_dep').as_system('system')
 endif
 
 if needs_client_runtime
@@ -68,23 +94,25 @@ if needs_client_runtime
         'USE_LIBIDN2': 'OFF',
     })
     curl_sp = cmake.subproject('curl', options: curl_options)
-    curl_dep = curl_sp.dependency('libcurl_static')
+    curl_dep = curl_sp.dependency('libcurl_static').as_system('system')
 endif
 
 if not server_opt.disabled()
-    facil_sp = subproject('facil', required: server_opt)
+    facil_sp = subproject('facil', default_options: ['warning_level=0'], required: server_opt)
 endif
 
 if not server_opt.disabled() and facil_sp.found()
-    facil_dep = facil_sp.get_variable('facil_dep')
+    facil_dep = facil_sp.get_variable('facil_dep').as_system('system')
     server_exe = executable(
         'progtp-server',
-        ['src/server.c', protocol_sources],
+        ['src/server/server.c', protocol_sources],
+        c_args: server_warning_suppressions,
         dependencies: [facil_dep, yyjson_dep],
-        include_directories: include_directories('src'),
+        include_directories: src_inc,
         install: true,
     )
     platform_targets += server_exe
+    lint_sources += files('src/server/server.c')
     run_target('run-server', command: [server_exe, '--public', meson.current_build_dir()])
 endif
 
@@ -113,42 +141,54 @@ if not native_opt.disabled()
         'SDL_VULKAN': 'OFF',
     })
     sdl3_sp = cmake.subproject('sdl3', options: sdl3_options, required: native_opt)
-    sdl3_dep = sdl3_sp.dependency('SDL3-shared')
+    sdl3_dep = sdl3_sp.dependency('SDL3-shared').as_system('system')
     meson.override_dependency('sdl3', sdl3_dep)
-    sdl3_ttf_sp = subproject('sdl3_ttf', required: native_opt)
+    sdl3_ttf_sp = subproject('sdl3_ttf', default_options: ['warning_level=0'], required: native_opt)
 endif
 
 if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
-    sdl3_ttf_dep = sdl3_ttf_sp.get_variable('sdl3_ttf_dep')
+    sdl3_ttf_dep = sdl3_ttf_sp.get_variable('sdl3_ttf_dep').as_system('system')
     native_exe = executable(
         'progtp-native',
-        ['src/native_sdl3.c', common_sources, protocol_sources, client_sources],
+        [
+            'src/platform/native/native_sdl3.c',
+            common_sources,
+            protocol_sources,
+            client_sources,
+        ],
         dependencies: common_deps + [sdl3_dep, sdl3_ttf_dep, yyjson_dep, curl_dep],
-        include_directories: include_directories('src'),
+        include_directories: src_inc,
         install: true,
     )
     platform_targets += native_exe
+    lint_sources += files('src/platform/native/native_sdl3.c')
     run_target('run-native', command: [native_exe])
 endif
 
 if not tui_opt.disabled()
-    termbox2_sp = subproject('termbox2', required: tui_opt)
+    termbox2_sp = subproject('termbox2', default_options: ['warning_level=0'], required: tui_opt)
 endif
 
 if not tui_opt.disabled() and termbox2_sp.found()
     tui_exe = executable(
         'progtp-tui',
-        ['src/tui_termbox2.c', common_sources, protocol_sources, client_sources],
+        [
+            'src/platform/tui/tui_termbox2.c',
+            common_sources,
+            protocol_sources,
+            client_sources,
+        ],
         c_args: ['-D_DEFAULT_SOURCE'],
         dependencies: common_deps + [
-            termbox2_sp.get_variable('termbox2_dep'),
+            termbox2_sp.get_variable('termbox2_dep').as_system('system'),
             yyjson_dep,
             curl_dep,
         ],
-        include_directories: include_directories('src'),
+        include_directories: src_inc,
         install: true,
     )
     platform_targets += tui_exe
+    lint_sources += files('src/platform/tui/tui_termbox2.c')
     run_target('run-tui', command: [tui_exe])
 endif
 
@@ -157,7 +197,7 @@ wasm_cc = find_program(get_option('wasm_cc'), required: web_opt)
 if wasm_cc.found()
     wasm = custom_target(
         'progtp-web-wasm',
-        input: 'src/web.c',
+        input: ['src/platform/web/web.c', 'src/app/app.c'],
         output: 'index.wasm',
         command: [
             wasm_cc,
@@ -168,6 +208,7 @@ if wasm_cc.found()
             '--target=wasm32',
             '-nostdlib',
             '-I' + meson.current_source_dir() / 'src',
+            '-I' + meson.current_source_dir() / 'src/app',
             '-I' + clay_root,
             '-Wl,--strip-all',
             '-Wl,--no-entry',
@@ -179,21 +220,31 @@ if wasm_cc.found()
             '-Wl,--export-memory',
             '-Wl,--initial-memory=16777216',
             '-o', '@OUTPUT@',
-            '@INPUT@',
+            '@INPUT0@',
+            '@INPUT1@',
         ],
         build_by_default: true,
         install: true,
         install_dir: get_option('datadir') / 'progtp-web',
     )
     web_html = fs.copyfile(
-        'src/index.html',
+        'src/platform/web/index.html',
         'index.html',
         install: true,
         install_dir: get_option('datadir') / 'progtp-web',
     )
     platform_targets += [wasm, web_html]
+    lint_sources += files('src/platform/web/web.c')
 endif
 
 if platform_targets.length() == 0
     error('No targets enabled. Enable native, tui, or web and allow Meson to fetch the required wraps.')
+endif
+
+clang_tidy = find_program('clang-tidy', required: false)
+if clang_tidy.found() and lint_sources.length() > 0
+    run_target(
+        'lint',
+        command: [clang_tidy, '-p', meson.current_build_dir()] + lint_sources,
+    )
 endif

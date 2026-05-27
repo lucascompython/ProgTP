@@ -5,7 +5,6 @@
 #include <clay.h>
 
 #include "app.h"
-#include "app.c"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -15,7 +14,11 @@
 #define PROGTP_WEB_MAX_COMMANDS 512u
 #define PROGTP_WEB_LABEL_CAPACITY 192u
 
+#if defined(__wasm__)
 #define PROGTP_WASM_EXPORT(name) __attribute__((export_name(name)))
+#else
+#define PROGTP_WASM_EXPORT(name)
+#endif
 
 typedef struct {
     float x;

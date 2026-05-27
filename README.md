@@ -44,7 +44,7 @@ Remote mode calls the HTTP server with libcurl:
 
 ## Shared App
 
-the app layout is shared. `src/app.c` builds one Clay render command list for every target.
+the app layout is shared. `src/app/app.c` builds one Clay render command list for every target.
 
 ## Packagefiles
 
@@ -62,5 +62,5 @@ Current overlays:
 
 - [ ] fix weird font rendering on native
 - [ ] add cli --help usage info
-- [ ] add warnings + linting
+- [x] add warnings + linting
 - [ ] support for wasm opt

@@ -1,0 +1,12 @@
+Checks: >
+  clang-diagnostic-*,
+  clang-analyzer-core.*,
+  clang-analyzer-unix.*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-suspicious-include,
+  -bugprone-easily-swappable-parameters
+HeaderFilterRegex: '^.*/src/.*'
+WarningsAsErrors: ''

@@ -13,12 +13,16 @@
 #include <stdlib.h>
 
 static Clay_Dimensions MeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data) {
-    TTF_Font **fonts = user_data;
-    TTF_Font *font = fonts[config->fontId];
+    Clay_SDL3RendererData *renderer_data = user_data;
+    TTF_Font *font = ProgTP_SDL3_GetFont(renderer_data, config->fontSize);
     int width = 0;
     int height = 0;
 
-    TTF_SetFontSize(font, config->fontSize);
+    if (!font) {
+        SDL_Log("Could not open font for size %u", config->fontSize);
+        return (Clay_Dimensions){0};
+    }
+
     if (!TTF_GetStringSize(font, text.chars, text.length, &width, &height)) {
         SDL_Log("TTF_GetStringSize failed: %s", SDL_GetError());
     }
@@ -26,7 +30,7 @@ static Clay_Dimensions MeasureText(Clay_StringSlice text, Clay_TextElementConfig
     return (Clay_Dimensions){ (float)width, (float)height };
 }
 
-static TTF_Font *OpenDefaultFont(void) {
+static const char *FindDefaultFontPath(void) {
     const char *paths[] = {
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/segoeui.ttf",
@@ -37,9 +41,10 @@ static TTF_Font *OpenDefaultFont(void) {
     };
 
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
-        TTF_Font *font = TTF_OpenFont(paths[i], 24);
+        TTF_Font *font = TTF_OpenFont(paths[i], 16);
         if (font) {
-            return font;
+            TTF_CloseFont(font);
+            return paths[i];
         }
     }
 
@@ -63,20 +68,13 @@ int main(int argc, char **argv) {
 
     SDL_Window *window = NULL;
     Clay_SDL3RendererData renderer_data = {0};
-    if (!SDL_CreateWindowAndRenderer("ProgTP Clay SDL3", 900, 600, SDL_WINDOW_RESIZABLE, &window, &renderer_data.renderer)) {
+    if (!SDL_CreateWindowAndRenderer("ProgTP Clay SDL3", 900, 600, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY, &window, &renderer_data.renderer)) {
         SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
         return 1;
     }
 
-    renderer_data.textEngine = TTF_CreateRendererTextEngine(renderer_data.renderer);
-    renderer_data.fonts = SDL_calloc(1, sizeof(TTF_Font *));
-    if (!renderer_data.textEngine || !renderer_data.fonts) {
-        SDL_Log("SDL text setup failed: %s", SDL_GetError());
-        return 1;
-    }
-
-    renderer_data.fonts[0] = OpenDefaultFont();
-    if (!renderer_data.fonts[0]) {
+    renderer_data.fontPath = FindDefaultFontPath();
+    if (!renderer_data.fontPath) {
         SDL_Log("Could not find a default TrueType font");
         return 1;
     }
@@ -85,9 +83,9 @@ int main(int argc, char **argv) {
     Clay_Arena clay_arena = Clay_CreateArenaWithCapacityAndMemory(clay_memory_size, malloc(clay_memory_size));
     int width = 0;
     int height = 0;
-    SDL_GetWindowSize(window, &width, &height);
+    SDL_GetRenderOutputSize(renderer_data.renderer, &width, &height);
     Clay_Initialize(clay_arena, (Clay_Dimensions){ (float)width, (float)height }, (Clay_ErrorHandler){ ProgTP_HandleClayError, NULL });
-    Clay_SetMeasureTextFunction(MeasureText, renderer_data.fonts);
+    Clay_SetMeasureTextFunction(MeasureText, &renderer_data);
 
     bool running = true;
     uint64_t previous_ticks = SDL_GetTicks();
@@ -97,7 +95,8 @@ int main(int argc, char **argv) {
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
             } else if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-                Clay_SetLayoutDimensions((Clay_Dimensions){ (float)event.window.data1, (float)event.window.data2 });
+                SDL_GetRenderOutputSize(renderer_data.renderer, &width, &height);
+                Clay_SetLayoutDimensions((Clay_Dimensions){ (float)width, (float)height });
             } else if (event.type == SDL_EVENT_MOUSE_WHEEL) {
                 Clay_UpdateScrollContainers(true, (Clay_Vector2){ event.wheel.x, event.wheel.y }, 0.01f);
             }
@@ -106,6 +105,7 @@ int main(int argc, char **argv) {
         float mouse_x = 0;
         float mouse_y = 0;
         uint32_t buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
+        SDL_RenderCoordinatesFromWindow(renderer_data.renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
         Clay_SetPointerState((Clay_Vector2){ mouse_x, mouse_y }, (buttons & SDL_BUTTON_LMASK) != 0);
 
         uint64_t ticks = SDL_GetTicks();
@@ -120,9 +120,7 @@ int main(int argc, char **argv) {
         SDL_RenderPresent(renderer_data.renderer);
     }
 
-    TTF_CloseFont(renderer_data.fonts[0]);
-    SDL_free(renderer_data.fonts);
-    TTF_DestroyRendererTextEngine(renderer_data.textEngine);
+    ProgTP_SDL3_CloseFonts(&renderer_data);
     SDL_DestroyRenderer(renderer_data.renderer);
     SDL_DestroyWindow(window);
     free(clay_arena.memory);
