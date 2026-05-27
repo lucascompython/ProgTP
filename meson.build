@@ -19,6 +19,7 @@ project_warnings = cc.get_supported_arguments([
 ])
 add_project_arguments(project_warnings, language: 'c')
 server_warning_suppressions = cc.get_supported_arguments(['-Wno-unused-function'])
+static_subproject_options = ['default_library=static']
 release_subproject_options = []
 
 if release_size
@@ -44,12 +45,14 @@ if release_size
     release_link_args = cc.get_supported_link_arguments(release_link_arg_candidates)
     add_project_arguments(release_c_args, language: 'c')
     add_project_link_arguments(release_link_args, language: 'c')
-    release_subproject_options = [
+    release_subproject_options = static_subproject_options + [
         'optimization=s',
         'debug=false',
         'b_lto=true',
         'b_ndebug=true',
     ]
+else
+    release_subproject_options = static_subproject_options
 endif
 
 src_inc = include_directories(
@@ -153,9 +156,11 @@ if not native_opt.disabled()
     sdl3_options = cmake.subproject_options()
     sdl3_options.add_cmake_defines({
         'SDL_ALSA': 'OFF',
+        'SDL_AUDIO': 'OFF',
+        'SDL_DIALOG': 'OFF',
         'SDL_CAMERA': 'OFF',
         'SDL_EXAMPLES': 'OFF',
-        'SDL_GPU': 'OFF',
+        'SDL_GPU': 'ON',
         'SDL_HAPTIC': 'OFF',
         'SDL_HIDAPI': 'OFF',
         'SDL_INSTALL': 'OFF',
@@ -165,19 +170,18 @@ if not native_opt.disabled()
         'SDL_PIPEWIRE': 'OFF',
         'SDL_POWER': 'OFF',
         'SDL_PULSEAUDIO': 'OFF',
-        'SDL_RENDER_GPU': 'OFF',
+        'SDL_RENDER_GPU': 'ON',
         'SDL_SENSOR': 'OFF',
-        'SDL_SHARED': 'ON',
-        'SDL_STATIC': 'OFF',
+        'SDL_SHARED': 'OFF',
+        'SDL_STATIC': 'ON',
         'SDL_TEST_LIBRARY': 'OFF',
         'SDL_TESTS': 'OFF',
-        'SDL_VULKAN': 'OFF',
     })
     if release_size
         sdl3_options.add_cmake_defines({'CMAKE_BUILD_TYPE': 'MinSizeRel'})
     endif
     sdl3_sp = cmake.subproject('sdl3', options: sdl3_options, required: native_opt)
-    sdl3_dep = sdl3_sp.dependency('SDL3-shared').as_system('system')
+    sdl3_dep = sdl3_sp.dependency('SDL3-static').as_system('system')
     meson.override_dependency('sdl3', sdl3_dep)
     sdl3_ttf_sp = subproject('sdl3_ttf', default_options: release_subproject_options + ['warning_level=0'], required: native_opt)
 endif
