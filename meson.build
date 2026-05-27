@@ -9,7 +9,7 @@ project(
 dependencies = []
 
 sources = [
-    'progtp.c',
+    'src/progtp.c',
 ]
 
 exe = executable(
