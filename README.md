@@ -78,3 +78,5 @@ Current overlays:
 - [ ] add cli --help usage info
 - [x] add warnings + linting
 - [x] support for wasm opt
+- [ ] move to emscripten for web target
+- [ ] better use provided renderers
