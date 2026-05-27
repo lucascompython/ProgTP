@@ -9,18 +9,48 @@ project(
 cmake = import('cmake')
 fs = import('fs')
 cc = meson.get_compiler('c')
+release_size = get_option('release_size')
 
 project_warnings = cc.get_supported_arguments([
     '-Wshadow',
     '-Wformat=2',
     '-Wundef',
     '-Wstrict-prototypes',
-    '-Wall',
-    '-Wextra',
-    '-Wpedantic'
 ])
 add_project_arguments(project_warnings, language: 'c')
 server_warning_suppressions = cc.get_supported_arguments(['-Wno-unused-function'])
+release_subproject_options = []
+
+if release_size
+    release_c_arg_candidates = [
+        '-DNDEBUG',
+        '-flto',
+        '-ffunction-sections',
+        '-fdata-sections',
+        '-fno-unwind-tables',
+        '-fno-asynchronous-unwind-tables',
+    ]
+    release_link_arg_candidates = [
+        '-flto',
+        '-Wl,--gc-sections',
+        '-Wl,--as-needed',
+        '-s',
+    ]
+    if get_option('optimization') != 's'
+        release_c_arg_candidates = ['-Os'] + release_c_arg_candidates
+        release_link_arg_candidates = ['-Os'] + release_link_arg_candidates
+    endif
+    release_c_args = cc.get_supported_arguments(release_c_arg_candidates)
+    release_link_args = cc.get_supported_link_arguments(release_link_arg_candidates)
+    add_project_arguments(release_c_args, language: 'c')
+    add_project_link_arguments(release_link_args, language: 'c')
+    release_subproject_options = [
+        'optimization=s',
+        'debug=false',
+        'b_lto=true',
+        'b_ndebug=true',
+    ]
+endif
 
 src_inc = include_directories(
     'src',
@@ -55,7 +85,7 @@ endif
 if needs_json
     yyjson_sp = subproject(
         'yyjson',
-        default_options: [
+        default_options: release_subproject_options + [
             'warning_level=0',
             'incr-reader=disabled',
             'utils=disabled',
@@ -93,12 +123,15 @@ if needs_client_runtime
         'USE_QUICHE': 'OFF',
         'USE_LIBIDN2': 'OFF',
     })
+    if release_size
+        curl_options.add_cmake_defines({'CMAKE_BUILD_TYPE': 'MinSizeRel'})
+    endif
     curl_sp = cmake.subproject('curl', options: curl_options)
     curl_dep = curl_sp.dependency('libcurl_static').as_system('system')
 endif
 
 if not server_opt.disabled()
-    facil_sp = subproject('facil', default_options: ['warning_level=0'], required: server_opt)
+    facil_sp = subproject('facil', default_options: release_subproject_options + ['warning_level=0'], required: server_opt)
 endif
 
 if not server_opt.disabled() and facil_sp.found()
@@ -140,10 +173,13 @@ if not native_opt.disabled()
         'SDL_TESTS': 'OFF',
         'SDL_VULKAN': 'OFF',
     })
+    if release_size
+        sdl3_options.add_cmake_defines({'CMAKE_BUILD_TYPE': 'MinSizeRel'})
+    endif
     sdl3_sp = cmake.subproject('sdl3', options: sdl3_options, required: native_opt)
     sdl3_dep = sdl3_sp.dependency('SDL3-shared').as_system('system')
     meson.override_dependency('sdl3', sdl3_dep)
-    sdl3_ttf_sp = subproject('sdl3_ttf', default_options: ['warning_level=0'], required: native_opt)
+    sdl3_ttf_sp = subproject('sdl3_ttf', default_options: release_subproject_options + ['warning_level=0'], required: native_opt)
 endif
 
 if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
@@ -166,7 +202,7 @@ if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
 endif
 
 if not tui_opt.disabled()
-    termbox2_sp = subproject('termbox2', default_options: ['warning_level=0'], required: tui_opt)
+    termbox2_sp = subproject('termbox2', default_options: release_subproject_options + ['warning_level=0'], required: tui_opt)
 endif
 
 if not tui_opt.disabled() and termbox2_sp.found()
@@ -193,24 +229,40 @@ if not tui_opt.disabled() and termbox2_sp.found()
 endif
 
 wasm_cc = find_program(get_option('wasm_cc'), required: web_opt)
+wasm_opt = find_program('wasm-opt', required: false)
 
 if wasm_cc.found()
-    wasm = custom_target(
+    wasm_c_optimization = '-Os'
+    wasm_output = 'index.wasm'
+    if release_size
+        wasm_c_optimization = '-Oz'
+        if wasm_opt.found()
+            wasm_output = 'index.unopt.wasm'
+        endif
+    endif
+
+    wasm_compile = custom_target(
         'progtp-web-wasm',
         input: ['src/platform/web/web.c', 'src/app/app.c'],
-        output: 'index.wasm',
+        output: wasm_output,
         command: [
             wasm_cc,
-            '-Os',
+            wasm_c_optimization,
             '-DPROGTP_WEB',
+            '-DNDEBUG',
             '-fno-builtin',
             '-mbulk-memory',
+            '-flto',
             '--target=wasm32',
             '-nostdlib',
+            '-ffunction-sections',
+            '-fdata-sections',
             '-I' + meson.current_source_dir() / 'src',
             '-I' + meson.current_source_dir() / 'src/app',
             '-I' + clay_root,
             '-Wl,--strip-all',
+            '-Wl,--gc-sections',
+            '-Wl,--lto-O3',
             '-Wl,--no-entry',
             '-Wl,--export=UpdateDrawFrame',
             '-Wl,--export=GetWebCommandBuffer',
@@ -224,9 +276,21 @@ if wasm_cc.found()
             '@INPUT1@',
         ],
         build_by_default: true,
-        install: true,
+        install: not (release_size and wasm_opt.found()),
         install_dir: get_option('datadir') / 'progtp-web',
     )
+    wasm = wasm_compile
+    if release_size and wasm_opt.found()
+        wasm = custom_target(
+            'progtp-web-wasm-opt',
+            input: wasm_compile,
+            output: 'index.wasm',
+            command: [wasm_opt, '-Oz', '--strip-debug', '--strip-producers', '@INPUT@', '-o', '@OUTPUT@'],
+            build_by_default: true,
+            install: true,
+            install_dir: get_option('datadir') / 'progtp-web',
+        )
+    endif
     web_html = fs.copyfile(
         'src/platform/web/index.html',
         'index.html',

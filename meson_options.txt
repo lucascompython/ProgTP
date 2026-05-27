@@ -3,3 +3,4 @@ option('tui', type: 'feature', value: 'auto', description: 'Build the termbox2 t
 option('web', type: 'feature', value: 'auto', description: 'Build the WebAssembly HTML target')
 option('server', type: 'feature', value: 'auto', description: 'Build the facil.io HTTP server target')
 option('wasm_cc', type: 'string', value: 'clang', description: 'C compiler used for the WebAssembly target')
+option('release_size', type: 'boolean', value: false, description: 'Enable release-size optimization flags, LTO, stripping, NDEBUG, and wasm-opt when available')

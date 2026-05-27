@@ -18,6 +18,20 @@ meson setup build-web -Dnative=disabled -Dtui=disabled -Dweb=enabled -Dserver=en
 meson compile -C build-web
 ```
 
+Release-size build, optimized for small and fast binaries:
+
+```sh
+meson setup build-release \
+  -Drelease_size=true \
+  -Dnative=enabled \
+  -Dtui=enabled \
+  -Dweb=enabled \
+  -Dserver=enabled
+meson compile -C build-release
+```
+
+In this mode native/server/TUI targets use `-Os`, LTO, `NDEBUG`, section garbage collection, strip-friendly linker flags, and release defaults for Meson subprojects where possible. CMake dependencies are configured as `MinSizeRel`. The wasm target uses `-Oz`; if `wasm-opt` is installed, Meson automatically runs `wasm-opt -Oz` and installs the optimized `index.wasm`.
+
 ## Targets
 
 - `progtp-server`: facil.io/cstl HTTP server. Serves `/api/hello` and static web files.
@@ -44,7 +58,7 @@ Remote mode calls the HTTP server with libcurl:
 
 ## Shared App
 
-the app layout is shared. `src/app/app.c` builds one Clay render command list for every target.
+The app layout is shared. `src/app/app.c` builds one Clay render command list for every target.
 
 ## Packagefiles
 
@@ -63,4 +77,4 @@ Current overlays:
 - [ ] fix weird font rendering on native
 - [ ] add cli --help usage info
 - [x] add warnings + linting
-- [ ] support for wasm opt
+- [x] support for wasm opt
