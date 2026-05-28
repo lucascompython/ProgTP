@@ -60,6 +60,8 @@ int main(int argc, char **argv) {
     char listen_url[96];
     snprintf(listen_url, sizeof(listen_url), "0.0.0.0:%s", port);
 
+    fio_http_mimetype_register((char *)"wasm", 4, FIO_STR_INFO1("application/wasm"));
+
     fio_http_listener_s *listener = fio_http_listen(
         listen_url,
         .on_http = OnStaticMiss,

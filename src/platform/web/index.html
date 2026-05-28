@@ -78,10 +78,11 @@
             { name: 'chars', type: 'uint32_t' },
         ]
     };
-    let borderDefinition = {
+    let stringSliceDefinition = {
         type: 'struct', members: [
-            { name: 'width', type: 'uint32_t' },
-            { name: 'color', ...colorDefinition },
+            { name: 'length', type: 'uint32_t' },
+            { name: 'chars', type: 'uint32_t' },
+            { name: 'baseChars', type: 'uint32_t' },
         ]
     };
     let cornerRadiusDefinition = {
@@ -92,53 +93,89 @@
             { name: 'bottomRight', type: 'float' },
         ]
     };
-    let rectangleConfigDefinition = {
+    let borderWidthDefinition = {
+        type: 'struct', members: [
+            { name: 'left', type: 'uint16_t' },
+            { name: 'right', type: 'uint16_t' },
+            { name: 'top', type: 'uint16_t' },
+            { name: 'bottom', type: 'uint16_t' },
+            { name: 'betweenChildren', type: 'uint16_t' },
+            { name: '_padding', type: 'uint16_t' },
+        ]
+    };
+    let rectangleRenderDataDefinition = {
         name: 'rectangle', type: 'struct', members: [
-            { name: 'color', ...colorDefinition },
+            { name: 'backgroundColor', ...colorDefinition },
             { name: 'cornerRadius', ...cornerRadiusDefinition },
-            { name: 'link', ...stringDefinition },
-            { name: 'cursorPointer', type: 'uint8_t' },
         ]
     };
-    let borderConfigDefinition = {
+    let textRenderDataDefinition = {
         name: 'text', type: 'struct', members: [
-            { name: 'left', ...borderDefinition },
-            { name: 'right', ...borderDefinition },
-            { name: 'top', ...borderDefinition },
-            { name: 'bottom', ...borderDefinition },
-            { name: 'betweenChildren', ...borderDefinition },
-            { name: 'cornerRadius', ...cornerRadiusDefinition }
-        ]
-    };
-    let textConfigDefinition = {
-        name: 'text', type: 'struct', members: [
+            { name: 'stringContents', ...stringSliceDefinition },
             { name: 'textColor', ...colorDefinition },
             { name: 'fontId', type: 'uint16_t' },
             { name: 'fontSize', type: 'uint16_t' },
             { name: 'letterSpacing', type: 'uint16_t' },
             { name: 'lineHeight', type: 'uint16_t' },
-            { name: 'disablePointerEvents', type: 'uint8_t' }
         ]
     };
-    let imageConfigDefinition = {
+    let textElementConfigDefinition = {
+        name: 'textConfig', type: 'struct', members: [
+            { name: 'userData', type: 'uint32_t' },
+            { name: 'textColor', ...colorDefinition },
+            { name: 'fontId', type: 'uint16_t' },
+            { name: 'fontSize', type: 'uint16_t' },
+            { name: 'letterSpacing', type: 'uint16_t' },
+            { name: 'lineHeight', type: 'uint16_t' },
+            { name: 'wrapMode', type: 'uint8_t' },
+            { name: 'textAlignment', type: 'uint8_t' },
+        ]
+    };
+    let imageRenderDataDefinition = {
         name: 'image', type: 'struct', members: [
-            { name: 'imageData', type: 'uint32_t' },
-            {
-                name: 'sourceDimensions', type: 'struct', members: [
-                    { name: 'width', type: 'float' },
-                    { name: 'height', type: 'float' },
-                ]
-            },
-            { name: 'sourceURL', ...stringDefinition }
+            { name: 'backgroundColor', ...colorDefinition },
+            { name: 'cornerRadius', ...cornerRadiusDefinition },
+            { name: 'imageData', type: 'uint32_t' }
         ]
     };
-    let customConfigDefinition = {
+    let customRenderDataDefinition = {
         name: 'custom', type: 'struct', members: [
+            { name: 'backgroundColor', ...colorDefinition },
+            { name: 'cornerRadius', ...cornerRadiusDefinition },
             { name: 'customData', type: 'uint32_t' },
         ]
     }
+    let borderRenderDataDefinition = {
+        name: 'border', type: 'struct', members: [
+            { name: 'color', ...colorDefinition },
+            { name: 'cornerRadius', ...cornerRadiusDefinition },
+            { name: 'width', ...borderWidthDefinition },
+        ]
+    };
+    let clipRenderDataDefinition = {
+        name: 'clip', type: 'struct', members: [
+            { name: 'horizontal', type: 'uint8_t' },
+            { name: 'vertical', type: 'uint8_t' },
+        ]
+    };
+    let overlayColorRenderDataDefinition = {
+        name: 'overlayColor', type: 'struct', members: [
+            { name: 'color', ...colorDefinition },
+        ]
+    };
+    let renderDataDefinition = {
+        name: 'renderData', type: 'union', members: [
+            rectangleRenderDataDefinition,
+            textRenderDataDefinition,
+            imageRenderDataDefinition,
+            customRenderDataDefinition,
+            borderRenderDataDefinition,
+            clipRenderDataDefinition,
+            overlayColorRenderDataDefinition,
+        ]
+    };
     let renderCommandDefinition = {
-        name: 'CLay_RenderCommand',
+        name: 'Clay_RenderCommand',
         type: 'struct',
         members: [
             {
@@ -149,10 +186,12 @@
                     { name: 'height', type: 'float' },
                 ]
             },
-            { name: 'config', type: 'uint32_t' },
-            { name: 'text', ...stringDefinition },
+            renderDataDefinition,
+            { name: 'userData', type: 'uint32_t' },
             { name: 'id', type: 'uint32_t' },
-            { name: 'commandType', type: 'uint32_t', },
+            { name: 'zIndex', type: 'uint16_t' },
+            { name: 'commandType', type: 'uint8_t' },
+            { name: '_padding', type: 'uint8_t' },
         ]
     };
 
@@ -201,7 +240,7 @@
             case 'float': return { value: memoryDataView.getFloat32(address, true), __size: 4 };
             case 'uint32_t': return { value: memoryDataView.getUint32(address, true), __size: 4 };
             case 'uint16_t': return { value: memoryDataView.getUint16(address, true), __size: 2 };
-            case 'uint8_t': return { value: memoryDataView.getUint16(address, true), __size: 1 };
+            case 'uint8_t': return { value: memoryDataView.getUint8(address), __size: 1 };
             default: {
                 throw "Unimplemented C data type " + definition.type
             }
@@ -304,7 +343,7 @@
                 measureTextFunction: (addressOfDimensions, textToMeasure, addressOfConfig) => {
                     let stringLength = memoryDataView.getUint32(textToMeasure, true);
                     let pointerToString = memoryDataView.getUint32(textToMeasure + 4, true);
-                    let textConfig = readStructAtAddress(addressOfConfig, textConfigDefinition);
+                    let textConfig = readStructAtAddress(addressOfConfig, textElementConfigDefinition);
                     let textDecoder = new TextDecoder("utf-8");
                     let text = textDecoder.decode(memoryDataView.buffer.slice(pointerToString, pointerToString + stringLength));
                     let sourceDimensions = getTextDimensions(text, `${Math.round(textConfig.fontSize.value * GLOBAL_FONT_SCALING_FACTOR)}px ${fontsById[textConfig.fontId.value]}`);
@@ -351,12 +390,6 @@
             if (!elementCache[renderCommand.id.value]) {
                 let elementType = 'div';
                 switch (renderCommand.commandType.value & 0xff) {
-                    case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: {
-                        if (readStructAtAddress(renderCommand.config.value, rectangleConfigDefinition).link.length.value > 0) {
-                            elementType = 'a';
-                        }
-                        break;
-                    }
                     case CLAY_RENDER_COMMAND_TYPE_IMAGE: { elementType = 'img'; break; }
                     default: break;
                 }
@@ -404,26 +437,11 @@
                     break;
                 }
                 case (CLAY_RENDER_COMMAND_TYPE_RECTANGLE): {
-                    let config = readStructAtAddress(renderCommand.config.value, rectangleConfigDefinition);
-                    let configMemory = new Uint8Array(memoryDataView.buffer.slice(renderCommand.config.value, renderCommand.config.value + config.__size));
-                    let linkContents = config.link.length.value > 0 ? textDecoder.decode(new Uint8Array(memoryDataView.buffer.slice(config.link.chars.value, config.link.chars.value + config.link.length.value))) : 0;
-                    memoryDataView.setUint32(0, renderCommand.id.value, true);
-                    if (linkContents.length > 0 && (window.mouseDownThisFrame || window.touchDown) && instance.exports.Clay_PointerOver(0)) {
-                        window.location.href = linkContents;
+                    if (!dirty) {
+                         break;
                     }
-                    if (!dirty && !MemoryIsDifferent(configMemory, elementData.previousMemoryConfig, config.__size)) {
-                        break;
-                    }
-                    if (linkContents.length > 0) {
-                        element.href = linkContents;
-                    }
-
-                    if (linkContents.length > 0 || config.cursorPointer.value) {
-                        element.style.pointerEvents = 'all';
-                        element.style.cursor = 'pointer';
-                    }
-                    elementData.previousMemoryConfig = configMemory;
-                    let color = config.color;
+                    let config = renderCommand.renderData.rectangle;
+                    let color = config.backgroundColor;
                     element.style.backgroundColor = `rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`;
                     if (config.cornerRadius.topLeft.value > 0) {
                         element.style.borderTopLeftRadius = config.cornerRadius.topLeft.value + 'px';
@@ -440,27 +458,22 @@
                     break;
                 }
                 case (CLAY_RENDER_COMMAND_TYPE_BORDER): {
-                    let config = readStructAtAddress(renderCommand.config.value, borderConfigDefinition);
-                    let configMemory = new Uint8Array(memoryDataView.buffer.slice(renderCommand.config.value, renderCommand.config.value + config.__size));
-                    if (!dirty && !MemoryIsDifferent(configMemory, elementData.previousMemoryConfig, config.__size)) {
+                    if (!dirty) {
                         break;
                     }
-                    elementData.previousMemoryConfig = configMemory;
-                    if (config.left.width.value > 0) {
-                        let color = config.left.color;
-                        element.style.borderLeft = `${config.left.width.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
+                    let config = renderCommand.renderData.border;
+                    let color = config.color;
+                    if (config.width.left.value > 0) {
+                        element.style.borderLeft = `${config.width.left.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
                     }
-                    if (config.right.width.value > 0) {
-                        let color = config.right.color;
-                        element.style.borderRight = `${config.right.width.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
+                    if (config.width.right.value > 0) {
+                        element.style.borderRight = `${config.width.right.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
                     }
-                    if (config.top.width.value > 0) {
-                        let color = config.top.color;
-                        element.style.borderTop = `${config.top.width.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
+                    if (config.width.top.value > 0) {
+                        element.style.borderTop = `${config.width.top.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
                     }
-                    if (config.bottom.width.value > 0) {
-                        let color = config.bottom.color;
-                        element.style.borderBottom = `${config.bottom.width.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
+                    if (config.width.bottom.value > 0) {
+                        element.style.borderBottom = `${config.width.bottom.value}px solid rgba(${color.r.value}, ${color.g.value}, ${color.b.value}, ${color.a.value / 255})`
                     }
                     if (config.cornerRadius.topLeft.value > 0) {
                         element.style.borderTopLeftRadius = config.cornerRadius.topLeft.value + 'px';
@@ -477,19 +490,17 @@
                     break;
                 }
                 case (CLAY_RENDER_COMMAND_TYPE_TEXT): {
-                    let config = readStructAtAddress(renderCommand.config.value, textConfigDefinition);
-                    let configMemory = new Uint8Array(memoryDataView.buffer.slice(renderCommand.config.value, renderCommand.config.value + config.__size));
-                    let textContents = renderCommand.text;
+                    let config = renderCommand.renderData.text;
+                    let textContents = config.stringContents;
                     let stringContents = new Uint8Array(memoryDataView.buffer.slice(textContents.chars.value, textContents.chars.value + textContents.length.value));
-                    if (MemoryIsDifferent(configMemory, elementData.previousMemoryConfig, config.__size)) {
+                    if (dirty) {
                         element.className = 'text';
                         let textColor = config.textColor;
                         let fontSize = Math.round(config.fontSize.value * GLOBAL_FONT_SCALING_FACTOR);
                         element.style.color = `rgba(${textColor.r.value}, ${textColor.g.value}, ${textColor.b.value}, ${textColor.a.value})`;
                         element.style.fontFamily = fontsById[config.fontId.value];
                         element.style.fontSize = fontSize + 'px';
-                        element.style.pointerEvents = config.disablePointerEvents.value ? 'none' : 'all';
-                        elementData.previousMemoryConfig = configMemory;
+                        element.style.pointerEvents = 'all';
                     }
                     if (stringContents.length !== elementData.previousMemoryText.length || MemoryIsDifferent(stringContents, elementData.previousMemoryText, stringContents.length)) {
                         element.innerHTML = textDecoder.decode(stringContents);
@@ -506,12 +517,6 @@
                     break;
                 }
                 case (CLAY_RENDER_COMMAND_TYPE_IMAGE): {
-                    let config = readStructAtAddress(renderCommand.config.value, imageConfigDefinition);
-                    let srcContents = new Uint8Array(memoryDataView.buffer.slice(config.sourceURL.chars.value, config.sourceURL.chars.value + config.sourceURL.length.value));
-                    if (srcContents.length !== elementData.previousMemoryText.length || MemoryIsDifferent(srcContents, elementData.previousMemoryText, srcContents.length)) {
-                        element.src = textDecoder.decode(srcContents);
-                    }
-                    elementData.previousMemoryText = srcContents;
                     break;
                 }
                 case (CLAY_RENDER_COMMAND_TYPE_CUSTOM): break;

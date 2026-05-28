@@ -12,6 +12,14 @@
 #define PROGTP_WEB_LABEL_CAPACITY 192u
 
 static char progtp_web_label[PROGTP_WEB_LABEL_CAPACITY] = "web: loading /api/hello";
+static bool progtp_web_measure_text_initialized;
+
+__attribute__((import_module("clay"), import_name("measureTextFunction")))
+Clay_Dimensions ProgTP_WebMeasureTextImport(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data);
+
+static Clay_Dimensions ProgTP_WebMeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data) {
+    return ProgTP_WebMeasureTextImport(text, config, user_data);
+}
 
 CLAY_WASM_EXPORT("UpdateDrawFrame")
 Clay_RenderCommandArray UpdateDrawFrame(
@@ -24,6 +32,11 @@ Clay_RenderCommandArray UpdateDrawFrame(
     bool is_touch_down,
     bool is_mouse_down,
     float delta_time) {
+    if (!progtp_web_measure_text_initialized) {
+        Clay_SetMeasureTextFunction(ProgTP_WebMeasureText, NULL);
+        progtp_web_measure_text_initialized = true;
+    }
+
     Clay_SetLayoutDimensions((Clay_Dimensions){ width, height });
     Clay_SetPointerState((Clay_Vector2){ mouse_position_x, mouse_position_y }, is_touch_down || is_mouse_down);
     Clay_UpdateScrollContainers(is_touch_down, (Clay_Vector2){ mouse_wheel_x, mouse_wheel_y }, delta_time);
