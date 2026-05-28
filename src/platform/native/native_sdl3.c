@@ -5,24 +5,26 @@
 #define CLAY_IMPLEMENTATION
 #include <clay.h>
 
+#include "../../../subprojects/clay/renderers/SDL3/clay_renderer_SDL3.c"
+
 #include "app.h"
-#include "clay_renderer_sdl3_basic.h"
 #include "command_client.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
 
 static Clay_Dimensions MeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data) {
-    Clay_SDL3RendererData *renderer_data = user_data;
-    TTF_Font *font = ProgTP_SDL3_GetFont(renderer_data, config->fontSize);
+    TTF_Font **fonts = user_data;
+    TTF_Font *font = fonts[config->fontId];
     int width = 0;
     int height = 0;
 
     if (!font) {
-        SDL_Log("Could not open font for size %u", config->fontSize);
+        SDL_Log("No font loaded for id %u", config->fontId);
         return (Clay_Dimensions){0};
     }
 
+    TTF_SetFontSize(font, config->fontSize);
     if (!TTF_GetStringSize(font, text.chars, text.length, &width, &height)) {
         SDL_Log("TTF_GetStringSize failed: %s", SDL_GetError());
     }
@@ -73,9 +75,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    renderer_data.fontPath = FindDefaultFontPath();
-    if (!renderer_data.fontPath) {
+    const char *font_path = FindDefaultFontPath();
+    if (!font_path) {
         SDL_Log("Could not find a default TrueType font");
+        return 1;
+    }
+    renderer_data.textEngine = TTF_CreateRendererTextEngine(renderer_data.renderer);
+    if (!renderer_data.textEngine) {
+        SDL_Log("TTF_CreateRendererTextEngine failed: %s", SDL_GetError());
+        return 1;
+    }
+    renderer_data.fonts = SDL_calloc(1, sizeof(*renderer_data.fonts));
+    if (!renderer_data.fonts) {
+        SDL_Log("Could not allocate font array");
+        return 1;
+    }
+    renderer_data.fonts[0] = TTF_OpenFont(font_path, 24);
+    if (!renderer_data.fonts[0]) {
+        SDL_Log("TTF_OpenFont failed: %s", SDL_GetError());
         return 1;
     }
 
@@ -85,7 +102,7 @@ int main(int argc, char **argv) {
     int height = 0;
     SDL_GetRenderOutputSize(renderer_data.renderer, &width, &height);
     Clay_Initialize(clay_arena, (Clay_Dimensions){ (float)width, (float)height }, (Clay_ErrorHandler){ ProgTP_HandleClayError, NULL });
-    Clay_SetMeasureTextFunction(MeasureText, &renderer_data);
+    Clay_SetMeasureTextFunction(MeasureText, renderer_data.fonts);
 
     bool running = true;
     uint64_t previous_ticks = SDL_GetTicks();
@@ -120,7 +137,13 @@ int main(int argc, char **argv) {
         SDL_RenderPresent(renderer_data.renderer);
     }
 
-    ProgTP_SDL3_CloseFonts(&renderer_data);
+    if (renderer_data.fonts) {
+        TTF_CloseFont(renderer_data.fonts[0]);
+        SDL_free(renderer_data.fonts);
+    }
+    if (renderer_data.textEngine) {
+        TTF_DestroyRendererTextEngine(renderer_data.textEngine);
+    }
     SDL_DestroyRenderer(renderer_data.renderer);
     SDL_DestroyWindow(window);
     free(clay_arena.memory);

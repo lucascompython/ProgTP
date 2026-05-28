@@ -183,6 +183,38 @@ if not native_opt.disabled()
     sdl3_sp = cmake.subproject('sdl3', options: sdl3_options, required: native_opt)
     sdl3_dep = sdl3_sp.dependency('SDL3-static').as_system('system')
     meson.override_dependency('sdl3', sdl3_dep)
+
+    sdl3_image_options = cmake.subproject_options()
+    sdl3_image_options.add_cmake_defines({
+        'BUILD_SHARED_LIBS': 'OFF',
+        'SDLIMAGE_AVIF': 'OFF',
+        'SDLIMAGE_BMP': 'OFF',
+        'SDLIMAGE_DEPS_SHARED': 'OFF',
+        'SDLIMAGE_GIF': 'OFF',
+        'SDLIMAGE_INSTALL': 'OFF',
+        'SDLIMAGE_JPG': 'OFF',
+        'SDLIMAGE_JXL': 'OFF',
+        'SDLIMAGE_LBM': 'OFF',
+        'SDLIMAGE_PNG': 'OFF',
+        'SDLIMAGE_PNM': 'OFF',
+        'SDLIMAGE_QOI': 'OFF',
+        'SDLIMAGE_SAMPLES': 'OFF',
+        'SDLIMAGE_SVG': 'OFF',
+        'SDLIMAGE_TGA': 'OFF',
+        'SDLIMAGE_TESTS': 'OFF',
+        'SDLIMAGE_TIF': 'OFF',
+        'SDLIMAGE_VENDORED': 'OFF',
+        'SDLIMAGE_WEBP': 'OFF',
+        'SDLIMAGE_XCF': 'OFF',
+        'SDLIMAGE_XPM': 'OFF',
+        'SDLIMAGE_XV': 'OFF',
+    })
+    if release_size
+        sdl3_image_options.add_cmake_defines({'CMAKE_BUILD_TYPE': 'MinSizeRel'})
+    endif
+    sdl3_image_sp = cmake.subproject('sdl3_image', options: sdl3_image_options, required: native_opt)
+    sdl3_image_dep = sdl3_image_sp.dependency('SDL3_image-static').as_system('system')
+
     sdl3_ttf_sp = subproject('sdl3_ttf', default_options: release_subproject_options + ['warning_level=0'], required: native_opt)
 endif
 
@@ -196,7 +228,7 @@ if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
             protocol_sources,
             client_sources,
         ],
-        dependencies: common_deps + [sdl3_dep, sdl3_ttf_dep, yyjson_dep, curl_dep],
+        dependencies: common_deps + [sdl3_dep, sdl3_ttf_dep, sdl3_image_dep, yyjson_dep, curl_dep],
         include_directories: src_inc,
         install: true,
     )
@@ -207,6 +239,9 @@ endif
 
 if not tui_opt.disabled()
     termbox2_sp = subproject('termbox2', default_options: release_subproject_options + ['warning_level=0'], required: tui_opt)
+    stb_sp = subproject('stb', required: tui_opt)
+    stb_dep = stb_sp.get_variable('stb_dep').as_system('system')
+    stb_m_dep = cc.find_library('m', required: false)
 endif
 
 if not tui_opt.disabled() and termbox2_sp.found()
@@ -221,6 +256,8 @@ if not tui_opt.disabled() and termbox2_sp.found()
         c_args: ['-D_DEFAULT_SOURCE'],
         dependencies: common_deps + [
             termbox2_sp.get_variable('termbox2_dep').as_system('system'),
+            stb_dep,
+            stb_m_dep,
             yyjson_dep,
             curl_dep,
         ],
@@ -232,10 +269,12 @@ if not tui_opt.disabled() and termbox2_sp.found()
     run_target('run-tui', command: [tui_exe])
 endif
 
-wasm_cc = find_program(get_option('wasm_cc'), required: web_opt)
+web_cc = find_program(get_option('web_cc'), required: web_opt)
 wasm_opt = find_program('wasm-opt', required: false)
+web_env = environment()
+web_env.set('EM_CACHE', meson.current_build_dir() / 'emscripten-cache')
 
-if wasm_cc.found()
+if web_cc.found()
     wasm_c_optimization = '-Os'
     wasm_output = 'index.wasm'
     if release_size
@@ -250,15 +289,18 @@ if wasm_cc.found()
         input: ['src/platform/web/web.c', 'src/app/app.c'],
         output: wasm_output,
         command: [
-            wasm_cc,
+            web_cc,
             wasm_c_optimization,
             '-DPROGTP_WEB',
             '-DNDEBUG',
-            '-fno-builtin',
-            '-mbulk-memory',
             '-flto',
-            '--target=wasm32',
-            '-nostdlib',
+            '-mbulk-memory',
+            '--no-entry',
+            '-sSTANDALONE_WASM=1',
+            '-sERROR_ON_UNDEFINED_SYMBOLS=0',
+            '-sFILESYSTEM=0',
+            '-sINITIAL_MEMORY=33554432',
+            '-sMALLOC=emmalloc',
             '-ffunction-sections',
             '-fdata-sections',
             '-I' + meson.current_source_dir() / 'src',
@@ -267,18 +309,20 @@ if wasm_cc.found()
             '-Wl,--strip-all',
             '-Wl,--gc-sections',
             '-Wl,--lto-O3',
-            '-Wl,--no-entry',
-            '-Wl,--export=UpdateDrawFrame',
-            '-Wl,--export=GetWebCommandBuffer',
-            '-Wl,--export=GetWebCommandSize',
+            '-Wl,--export=__heap_base',
+            '-Wl,--export=Clay_CreateArenaWithCapacityAndMemory',
+            '-Wl,--export=Clay_Initialize',
+            '-Wl,--export=Clay_MinMemorySize',
+            '-Wl,--export=Clay_PointerOver',
             '-Wl,--export=GetCommandLabelBuffer',
             '-Wl,--export=GetCommandLabelCapacity',
+            '-Wl,--export=UpdateDrawFrame',
             '-Wl,--export-memory',
-            '-Wl,--initial-memory=16777216',
             '-o', '@OUTPUT@',
             '@INPUT0@',
             '@INPUT1@',
         ],
+        env: web_env,
         build_by_default: true,
         install: not (release_size and wasm_opt.found()),
         install_dir: get_option('datadir') / 'progtp-web',
@@ -289,7 +333,17 @@ if wasm_cc.found()
             'progtp-web-wasm-opt',
             input: wasm_compile,
             output: 'index.wasm',
-            command: [wasm_opt, '-Oz', '--strip-debug', '--strip-producers', '@INPUT@', '-o', '@OUTPUT@'],
+            command: [
+                wasm_opt,
+                '-Oz',
+                '--enable-bulk-memory',
+                '--enable-bulk-memory-opt',
+                '--enable-nontrapping-float-to-int',
+                '--strip-debug',
+                '--strip-producers',
+                '@INPUT@',
+                '-o', '@OUTPUT@',
+            ],
             build_by_default: true,
             install: true,
             install_dir: get_option('datadir') / 'progtp-web',

@@ -2,5 +2,5 @@ option('native', type: 'feature', value: 'auto', description: 'Build the SDL3 de
 option('tui', type: 'feature', value: 'auto', description: 'Build the termbox2 terminal target')
 option('web', type: 'feature', value: 'auto', description: 'Build the WebAssembly HTML target')
 option('server', type: 'feature', value: 'auto', description: 'Build the facil.io HTTP server target')
-option('wasm_cc', type: 'string', value: 'clang', description: 'C compiler used for the WebAssembly target')
+option('web_cc', type: 'string', value: 'emcc', description: 'Emscripten C compiler used for the WebAssembly target')
 option('release_size', type: 'boolean', value: false, description: 'Enable release-size optimization flags, LTO, stripping, NDEBUG, and wasm-opt when available')

@@ -4,7 +4,7 @@ Shared C/Clay hello-world app for web, SDL3 native, and termbox2 TUI.
 
 ## Build
 
-Required: Meson, Ninja, a C compiler, cmake for dependencies and Git for Meson wraps. The web target also needs `clang` with `wasm32` support.
+Required: Meson, Ninja, a C compiler, cmake for dependencies and Git for Meson wraps. The web target uses Emscripten and needs `emcc`.
 
 ```sh
 meson setup build -Dnative=enabled -Dtui=enabled -Dweb=enabled -Dserver=enabled
@@ -35,9 +35,9 @@ In this mode native/server/TUI targets use `-Os`, LTO, `NDEBUG`, section garbage
 ## Targets
 
 - `progtp-server`: facil.io/cstl HTTP server. Serves `/api/hello` and static web files.
-- `progtp-native`: SDL3 desktop app. Uses SDL_ttf for text, with no SDL_image.
-- `progtp-tui`: termbox2 terminal app. Press `q`, `Esc`, or `Ctrl-C` to quit.
-- `index.html` + `index.wasm`: web app using the same Clay layout and Fetch API.
+- `progtp-native`: SDL3 desktop app using SDL3 renderer.
+- `progtp-tui`: termbox2 terminal app using termbox2 renderer. Press `q`, `Esc`, or `Ctrl-C` to quit.
+- `index.html` + `index.wasm`: web app using Clay's HTML renderer.
 
 ## Running
 
@@ -56,6 +56,14 @@ Remote mode calls the HTTP server with libcurl:
 ./build/progtp-tui --remote http://localhost:8000
 ```
 
+The web target is served by the same server:
+
+```sh
+./build/progtp-server --port 8000 --public build
+```
+
+Open `http://localhost:8000/index.html`.
+
 ## Shared App
 
 The app layout is shared. `src/app/app.c` builds one Clay render command list for every target.
@@ -71,6 +79,7 @@ Current overlays:
 - `yyjson`: builds upstream `src/yyjson.c` and exposes feature switches. This project disables incremental reader, utils, and non-standard JSON.
 - `facil`: builds cstl with `FIO_HTTP` instead of `FIO_EVERYTHING`.
 - `sdl3_ttf`: builds SDL_ttf with SDL3 and FreeType only.
+- `stb`: header-only dependency used by Clay's termbox2 renderer.
 
 ## TODO:
 
@@ -78,5 +87,5 @@ Current overlays:
 - [ ] add cli --help usage info
 - [x] add warnings + linting
 - [x] support for wasm opt
-- [ ] move to emscripten for web target
-- [ ] better use provided renderers
+- [x] move to emscripten for web target
+- [x] use provided Clay renderers

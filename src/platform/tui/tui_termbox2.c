@@ -1,13 +1,19 @@
 #define CLAY_IMPLEMENTATION
 #include <clay.h>
 
-#define TB_OPT_ATTR_W 32
+#include "../../../subprojects/clay/renderers/termbox2/clay_renderer_termbox2.c"
+
+#include "app.h"
+#include "command_client.h"
+
 #define TB_IMPL
 #include <termbox2.h>
 
-#include "app.h"
-#include "clay_renderer_termbox2_basic.h"
-#include "command_client.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include <stb_image_resize2.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -22,20 +28,21 @@ int main(int argc, char **argv) {
     char command_label[192];
     ProgTP_FormatCommandResultLabel(&command_result, command_label, sizeof(command_label));
 
-    int termbox_result = ProgTP_Termbox_Initialize();
-    if (termbox_result != TB_OK) {
-        fprintf(stderr, "termbox2 init failed: %s\n", tb_strerror(termbox_result));
-        return 1;
-    }
+    Clay_Termbox_Initialize(
+        TB_OUTPUT_256,
+        CLAY_TB_BORDER_MODE_DEFAULT,
+        CLAY_TB_BORDER_CHARS_DEFAULT,
+        CLAY_TB_IMAGE_MODE_PLACEHOLDER,
+        false);
 
     uint64_t clay_memory_size = Clay_MinMemorySize();
     Clay_Arena clay_arena = Clay_CreateArenaWithCapacityAndMemory(clay_memory_size, malloc(clay_memory_size));
-    Clay_Initialize(clay_arena, (Clay_Dimensions){ ProgTP_Termbox_Width(), ProgTP_Termbox_Height() }, (Clay_ErrorHandler){ ProgTP_HandleClayError, NULL });
-    Clay_SetMeasureTextFunction(ProgTP_Termbox_MeasureText, NULL);
+    Clay_Initialize(clay_arena, (Clay_Dimensions){ Clay_Termbox_Width(), Clay_Termbox_Height() }, (Clay_ErrorHandler){ ProgTP_HandleClayError, NULL });
+    Clay_SetMeasureTextFunction(Clay_Termbox_MeasureText, NULL);
 
     Clay_RenderCommandArray commands = ProgTP_BuildHelloWorldLayout(command_label, 0.0f);
     tb_clear();
-    ProgTP_Termbox_Render(commands);
+    Clay_Termbox_Render(commands);
     tb_present();
 
     bool running = true;
@@ -46,20 +53,20 @@ int main(int argc, char **argv) {
             if (event.type == TB_EVENT_KEY && (event.key == TB_KEY_ESC || event.key == TB_KEY_CTRL_C || event.ch == 'q' || event.ch == 'Q')) {
                 running = false;
             } else if (event.type == TB_EVENT_RESIZE) {
-                Clay_SetLayoutDimensions((Clay_Dimensions){ ProgTP_Termbox_Width(), ProgTP_Termbox_Height() });
+                Clay_SetLayoutDimensions((Clay_Dimensions){ Clay_Termbox_Width(), Clay_Termbox_Height() });
             }
         }
 
-        Clay_SetLayoutDimensions((Clay_Dimensions){ ProgTP_Termbox_Width(), ProgTP_Termbox_Height() });
+        Clay_SetLayoutDimensions((Clay_Dimensions){ Clay_Termbox_Width(), Clay_Termbox_Height() });
         Clay_SetPointerState((Clay_Vector2){ 0, 0 }, false);
         commands = ProgTP_BuildHelloWorldLayout(command_label, 0.016f);
 
         tb_clear();
-        ProgTP_Termbox_Render(commands);
+        Clay_Termbox_Render(commands);
         tb_present();
     }
 
-    ProgTP_Termbox_Close();
+    Clay_Termbox_Close();
     free(clay_arena.memory);
     return 0;
 }
