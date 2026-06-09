@@ -39,6 +39,23 @@ In this mode native/server/TUI targets use `-Os`, LTO, `NDEBUG`, section garbage
 - `progtp-tui`: termbox2 terminal app using termbox2 renderer. Press `q`, `Esc`, or `Ctrl-C` to quit.
 - `index.html` + `index.wasm`: web app using Clay's HTML renderer.
 
+## Module 1 Inventory
+
+persist it in `equipamentos.dat`
+
+Keyboard controls in all targets:
+
+- `N` / `P`: select next or previous equipment.
+- `A`: add a sample equipment.
+- `U`: update the selected equipment.
+- `R`: remove the selected equipment. Removal is blocked while pending incidents are marked.
+- `S`: cycle the selected equipment state.
+- `T`: toggle pending incidents for the selected equipment.
+- `1` / `2` / `3` / `4`: list using array, singly linked list, doubly linked list, or reverse doubly linked list.
+- `5` / `6`: filter routers or failed equipment.
+- `C` / `I` / `M`: search by code, IP, or MAC. Type the value and press Enter.
+- `W` / `L`: save or reload the binary inventory where persistence is available.
+
 ## Running
 
 Local mode runs the command directly:

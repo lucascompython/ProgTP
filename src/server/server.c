@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define PROGTP_SERVER_INVENTORY_PATH "equipamentos.dat"
+
 static bool StrEquals(fio_str_info_s value, const char *expected) {
     size_t expected_length = strlen(expected);
     return value.len == expected_length && memcmp(value.buf, expected, expected_length) == 0;
@@ -15,6 +17,20 @@ static void SendText(fio_http_s *request, size_t status, const char *body) {
     fio_http_status_set(request, status);
     fio_http_response_header_set(request, FIO_STR_INFO1("content-type"), FIO_STR_INFO1("text/plain"));
     fio_http_write(request, .buf = body, .len = strlen(body), .finish = 1);
+}
+
+static void SendJson(fio_http_s *request, size_t status, char *json, size_t json_length) {
+    fio_http_status_set(request, status);
+    fio_http_response_header_set(request, FIO_STR_INFO1("content-type"), FIO_STR_INFO1("application/json"));
+    fio_http_write(request, .buf = json, .len = json_length, .dealloc = free, .copy = 0, .finish = 1);
+}
+
+static bool LoadServerInventory(ProgTP_EquipmentInventory *inventory, char *error, size_t error_size) {
+    if (ProgTP_EquipmentInventoryLoadBinary(inventory, PROGTP_SERVER_INVENTORY_PATH, error, error_size)) {
+        return true;
+    }
+    ProgTP_EquipmentInventorySeedDefaults(inventory);
+    return ProgTP_EquipmentInventorySaveBinary(inventory, PROGTP_SERVER_INVENTORY_PATH, error, error_size);
 }
 
 static void OnApiHello(fio_http_s *request) {
@@ -42,8 +58,63 @@ static void OnApiHello(fio_http_s *request) {
     fio_http_write(request, .buf = json, .len = json_length, .dealloc = free, .copy = 0, .finish = 1);
 }
 
+static void OnApiInventory(fio_http_s *request) {
+    if (!StrEquals(fio_http_opath(request), "/api/inventory")) {
+        fio_http_send_error_response(request, 404);
+        return;
+    }
+
+    char error[256] = {0};
+    ProgTP_EquipmentInventory inventory;
+    ProgTP_EquipmentInventoryInit(&inventory);
+
+    if (StrEquals(fio_http_method(request), "GET")) {
+        if (!LoadServerInventory(&inventory, error, sizeof(error))) {
+            ProgTP_EquipmentInventoryDestroy(&inventory);
+            SendText(request, 500, error);
+            return;
+        }
+        size_t json_length = 0;
+        char *json = ProgTP_EquipmentInventoryToJson(&inventory, &json_length);
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        if (!json) {
+            fio_http_send_error_response(request, 500);
+            return;
+        }
+        SendJson(request, 200, json, json_length);
+        return;
+    }
+
+    if (StrEquals(fio_http_method(request), "PUT") || StrEquals(fio_http_method(request), "POST")) {
+        fio_http_body_seek(request, 0);
+        fio_str_info_s body = fio_http_body_read(request, (size_t)-1);
+        if (body.len == 0 || !ProgTP_EquipmentInventoryFromJson(body.buf, body.len, &inventory, error, sizeof(error))) {
+            ProgTP_EquipmentInventoryDestroy(&inventory);
+            SendText(request, 400, error[0] ? error : "invalid inventory JSON");
+            return;
+        }
+        if (!ProgTP_EquipmentInventorySaveBinary(&inventory, PROGTP_SERVER_INVENTORY_PATH, error, sizeof(error))) {
+            ProgTP_EquipmentInventoryDestroy(&inventory);
+            SendText(request, 500, error);
+            return;
+        }
+        size_t json_length = 0;
+        char *json = ProgTP_EquipmentInventoryToJson(&inventory, &json_length);
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        if (!json) {
+            fio_http_send_error_response(request, 500);
+            return;
+        }
+        SendJson(request, 200, json, json_length);
+        return;
+    }
+
+    ProgTP_EquipmentInventoryDestroy(&inventory);
+    SendText(request, 405, "method not allowed\n");
+}
+
 static void OnStaticMiss(fio_http_s *request) {
-    SendText(request, 404, "ProgTP server. Try /api/hello or /index.html\n");
+    SendText(request, 404, "ProgTP server. Try /api/inventory, /api/hello, or /index.html\n");
 }
 
 int main(int argc, char **argv) {
@@ -78,6 +149,14 @@ int main(int argc, char **argv) {
             .on_http = OnApiHello,
             .public_folder = FIO_STR_INFO2("", 0)) != 0) {
         fprintf(stderr, "failed to register /api/hello route\n");
+        return 1;
+    }
+    if (fio_http_route(
+            listener,
+            "/api/inventory",
+            .on_http = OnApiInventory,
+            .public_folder = FIO_STR_INFO2("", 0)) != 0) {
+        fprintf(stderr, "failed to register /api/inventory route\n");
         return 1;
     }
 

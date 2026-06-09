@@ -42,6 +42,7 @@
         }
     </style>
 </head>
+<script src="./index.js"></script>
 <script type="module">
     const CLAY_RENDER_COMMAND_TYPE_NONE = 0;
     const CLAY_RENDER_COMMAND_TYPE_RECTANGLE = 1;
@@ -51,14 +52,45 @@
     const CLAY_RENDER_COMMAND_TYPE_SCISSOR_START = 5;
     const CLAY_RENDER_COMMAND_TYPE_SCISSOR_END = 6;
     const CLAY_RENDER_COMMAND_TYPE_CUSTOM = 7;
+    const PROGTP_APP_ACTION_NONE = 0;
+    const PROGTP_APP_ACTION_NEXT = 1;
+    const PROGTP_APP_ACTION_PREVIOUS = 2;
+    const PROGTP_APP_ACTION_ADD_SAMPLE = 3;
+    const PROGTP_APP_ACTION_UPDATE_SELECTED = 4;
+    const PROGTP_APP_ACTION_REMOVE_SELECTED = 5;
+    const PROGTP_APP_ACTION_CYCLE_STATE = 6;
+    const PROGTP_APP_ACTION_TOGGLE_PENDING = 7;
+    const PROGTP_APP_ACTION_SEARCH_CODE = 12;
+    const PROGTP_APP_ACTION_SEARCH_IP = 13;
+    const PROGTP_APP_ACTION_SEARCH_MAC = 14;
+    const PROGTP_APP_ACTION_INPUT_BACKSPACE = 16;
+    const PROGTP_APP_ACTION_INPUT_SUBMIT = 17;
+    const PROGTP_APP_ACTION_SAVE = 18;
+    const PROGTP_APP_ACTION_LOAD = 19;
+    const PROGTP_APP_ACTION_MODULE_1 = 20;
+    const PROGTP_APP_ACTION_MODULE_2 = 21;
+    const PROGTP_APP_ACTION_MODULE_3 = 22;
+    const PROGTP_APP_ACTION_MODULE_4 = 23;
+    const PROGTP_APP_ACTION_MODULE_5 = 24;
+    const PROGTP_APP_ACTION_MODULE_6 = 25;
+    const PROGTP_APP_ACTION_MODULE_7 = 26;
+    const PROGTP_APP_ACTION_MODULE_8 = 27;
+    const PROGTP_APP_ACTION_FORM_SUBMIT = 28;
+    const PROGTP_APP_ACTION_FORM_CANCEL = 29;
+    const PROGTP_APP_ACTION_FORM_NEXT_FIELD = 30;
+    const PROGTP_APP_ACTION_FORM_PREVIOUS_FIELD = 31;
     const GLOBAL_FONT_SCALING_FACTOR = 0.8;
     let renderCommandSize = 0;
     let scratchSpaceAddress = 0;
     let heapSpaceAddress = 0;
+    let instance;
     let memoryDataView;
     let textDecoder = new TextDecoder("utf-8");
     let textEncoder = new TextEncoder();
     let previousFrameTime;
+    let pendingInputEvents = [];
+    let saveInFlight = false;
+    let lastSaveAttemptVersion = 0;
     let fontsById = [
         "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     ];
@@ -251,13 +283,18 @@
         // re-use canvas object for better performance
         window.canvasContext.font = font;
         let metrics = window.canvasContext.measureText(text);
-        return { width: metrics.width, height: metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent };
+        let fontSize = Number.parseFloat(font) || 16;
+        let height = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
+        if (!Number.isFinite(height) || height <= 0) {
+            height = fontSize * 1.25;
+        }
+        return { width: metrics.width, height };
     }
 
-    function createMainArena(arenaStructAddress, arenaMemoryAddress) {
-        let memorySize = instance.exports.Clay_MinMemorySize();
-        // Last arg is address to store return value
-        instance.exports.Clay_CreateArenaWithCapacityAndMemory(arenaStructAddress, memorySize, arenaMemoryAddress);
+    function refreshMemoryView() {
+        if (!memoryDataView || memoryDataView.buffer !== instance.exports.memory.buffer) {
+            memoryDataView = new DataView(instance.exports.memory.buffer);
+        }
     }
 
     function setSharedLabel(value) {
@@ -274,13 +311,76 @@
         try {
             const response = await fetch("/api/hello");
             if (!response.ok) {
-                setSharedLabel("web: server unavailable");
+                setSharedLabel("Mode: local | server unavailable");
                 return;
             }
             const data = await response.json();
-            setSharedLabel(`${data.mode}: ${data.message}`);
+            setSharedLabel(data.mode === "server" ? "Mode: connected to server | inventory stored on server PC" : "Mode: local | browser memory");
         } catch {
-            setSharedLabel("web: server unavailable");
+            setSharedLabel("Mode: local | server unavailable");
+        }
+    }
+
+    function writeInventoryJson(jsonText) {
+        const buffer = instance.exports.GetInventoryJsonBuffer();
+        const capacity = instance.exports.GetInventoryJsonCapacity();
+        const bytes = textEncoder.encode(jsonText);
+        if (bytes.length >= capacity) {
+            throw new Error("Inventory JSON is too large for the WASM buffer");
+        }
+        new Uint8Array(instance.exports.memory.buffer).set(bytes, buffer);
+        return Boolean(instance.exports.ImportInventoryJson(bytes.length));
+    }
+
+    async function loadInventory() {
+        try {
+            const response = await fetch("/api/inventory", { cache: "no-store" });
+            if (!response.ok) {
+                setSharedLabel("Mode: local | server unavailable");
+                return;
+            }
+            const jsonText = await response.text();
+            if (writeInventoryJson(jsonText)) {
+                setSharedLabel("Mode: connected to server | inventory stored on server PC");
+            }
+        } catch {
+            setSharedLabel("Mode: local | server unavailable");
+        }
+    }
+
+    async function saveInventoryIfDirty() {
+        if (saveInFlight || !instance.exports.IsInventoryDirty()) {
+            return;
+        }
+        const version = instance.exports.GetInventoryVersion();
+        if (version === lastSaveAttemptVersion) {
+            return;
+        }
+        const length = instance.exports.ExportInventoryJson();
+        if (length === 0) {
+            lastSaveAttemptVersion = version;
+            return;
+        }
+        const buffer = instance.exports.GetInventoryJsonBuffer();
+        const jsonText = textDecoder.decode(new Uint8Array(instance.exports.memory.buffer, buffer, length));
+        saveInFlight = true;
+        lastSaveAttemptVersion = version;
+        try {
+            const response = await fetch("/api/inventory", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: jsonText,
+            });
+            if (response.ok) {
+                instance.exports.MarkInventoryClean();
+                setSharedLabel("Mode: connected to server | inventory stored on server PC");
+            } else {
+                setSharedLabel("Mode: local | HTTP save failed");
+            }
+        } catch {
+            setSharedLabel("Mode: local | HTTP save failed");
+        } finally {
+            saveInFlight = false;
         }
     }
 
@@ -326,46 +426,92 @@
         });
 
         document.addEventListener("mousedown", (event) => {
+            window.mousePositionXThisFrame = event.x;
+            window.mousePositionYThisFrame = event.y;
             window.mouseDown = true;
         });
 
         document.addEventListener("keydown", (event) => {
-            if (event.key === "ArrowDown") {
-                window.arrowKeyDownPressedThisFrame = true;
-            }
-            if (event.key === "ArrowUp") {
-                window.arrowKeyUpPressedThisFrame = true;
+            const actionByKey = {
+                n: PROGTP_APP_ACTION_NEXT,
+                p: PROGTP_APP_ACTION_PREVIOUS,
+                a: PROGTP_APP_ACTION_ADD_SAMPLE,
+                u: PROGTP_APP_ACTION_UPDATE_SELECTED,
+                r: PROGTP_APP_ACTION_REMOVE_SELECTED,
+                "1": PROGTP_APP_ACTION_MODULE_1,
+                "2": PROGTP_APP_ACTION_MODULE_2,
+                "3": PROGTP_APP_ACTION_MODULE_3,
+                "4": PROGTP_APP_ACTION_MODULE_4,
+                "5": PROGTP_APP_ACTION_MODULE_5,
+                "6": PROGTP_APP_ACTION_MODULE_6,
+                "7": PROGTP_APP_ACTION_MODULE_7,
+                "8": PROGTP_APP_ACTION_MODULE_8,
+                c: PROGTP_APP_ACTION_SEARCH_CODE,
+                i: PROGTP_APP_ACTION_SEARCH_IP,
+                m: PROGTP_APP_ACTION_SEARCH_MAC,
+                w: PROGTP_APP_ACTION_SAVE,
+                l: PROGTP_APP_ACTION_LOAD,
+            };
+            if (event.key === "Backspace") {
+                pendingInputEvents.push({ action: PROGTP_APP_ACTION_INPUT_BACKSPACE, codepoint: 0 });
+                event.preventDefault();
+            } else if (event.key === "Enter") {
+                pendingInputEvents.push({ action: PROGTP_APP_ACTION_INPUT_SUBMIT, codepoint: 0 });
+                event.preventDefault();
+            } else if (event.key === "Escape") {
+                pendingInputEvents.push({ action: PROGTP_APP_ACTION_FORM_CANCEL, codepoint: 0 });
+                event.preventDefault();
+            } else if (event.key === "Tab") {
+                pendingInputEvents.push({ action: event.shiftKey ? PROGTP_APP_ACTION_FORM_PREVIOUS_FIELD : PROGTP_APP_ACTION_FORM_NEXT_FIELD, codepoint: 0 });
+                event.preventDefault();
+            } else {
+                const lowerKey = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+                if (Object.prototype.hasOwnProperty.call(actionByKey, lowerKey)) {
+                    pendingInputEvents.push({
+                        action: actionByKey[lowerKey],
+                        codepoint: event.key.length === 1 ? event.key.charCodeAt(0) : 0,
+                    });
+                    event.preventDefault();
+                } else if (event.key.length === 1) {
+                    pendingInputEvents.push({ action: PROGTP_APP_ACTION_NONE, codepoint: event.key.charCodeAt(0) });
+                    event.preventDefault();
+                }
             }
         });
 
-        const importObject = {
-            clay: {
-                measureTextFunction: (addressOfDimensions, textToMeasure, addressOfConfig) => {
-                    let stringLength = memoryDataView.getUint32(textToMeasure, true);
-                    let pointerToString = memoryDataView.getUint32(textToMeasure + 4, true);
-                    let textConfig = readStructAtAddress(addressOfConfig, textElementConfigDefinition);
-                    let textDecoder = new TextDecoder("utf-8");
-                    let text = textDecoder.decode(memoryDataView.buffer.slice(pointerToString, pointerToString + stringLength));
-                    let sourceDimensions = getTextDimensions(text, `${Math.round(textConfig.fontSize.value * GLOBAL_FONT_SCALING_FACTOR)}px ${fontsById[textConfig.fontId.value]}`);
-                    memoryDataView.setFloat32(addressOfDimensions, sourceDimensions.width, true);
-                    memoryDataView.setFloat32(addressOfDimensions + 4, sourceDimensions.height, true);
-                }
+        const module = await window.createProgTPModule({
+            locateFile: (path) => path.endsWith(".wasm") ? "./index.wasm" : path,
+        });
+        const memory = {};
+        Object.defineProperty(memory, "buffer", { get: () => module.HEAPU8.buffer });
+        instance = {
+            exports: {
+                memory,
+                GetCommandLabelBuffer: module._GetCommandLabelBuffer,
+                GetCommandLabelCapacity: module._GetCommandLabelCapacity,
+                GetRenderCommandsBuffer: module._GetRenderCommandsBuffer,
+                GetInventoryJsonBuffer: module._GetInventoryJsonBuffer,
+                GetInventoryJsonCapacity: module._GetInventoryJsonCapacity,
+                ImportInventoryJson: module._ImportInventoryJson,
+                ExportInventoryJson: module._ExportInventoryJson,
+                IsInventoryDirty: module._IsInventoryDirty,
+                GetInventoryVersion: module._GetInventoryVersion,
+                MarkInventoryClean: module._MarkInventoryClean,
+                InitializeClay: module._InitializeClay,
+                UpdateDrawFrame: module._UpdateDrawFrame,
             },
         };
-        const { instance } = await WebAssembly.instantiateStreaming(
-            fetch("./index.wasm"), importObject
-        );
-        memoryDataView = new DataView(new Uint8Array(instance.exports.memory.buffer).buffer);
-        scratchSpaceAddress = instance.exports.__heap_base.value;
-        heapSpaceAddress = instance.exports.__heap_base.value + 1024;
-        let arenaAddress = scratchSpaceAddress;
+        memoryDataView = new DataView(instance.exports.memory.buffer);
+        scratchSpaceAddress = instance.exports.GetRenderCommandsBuffer();
+        heapSpaceAddress = 0;
         window.instance = instance;
-        createMainArena(arenaAddress, heapSpaceAddress);
-        instance.exports.Clay_Initialize(arenaAddress);
+        instance.exports.InitializeClay(window.innerWidth, window.innerHeight);
+        memoryDataView = new DataView(instance.exports.memory.buffer);
         renderCommandSize = getStructTotalSize(renderCommandDefinition);
         previousFrameTime = performance.now();
+        await loadInventory();
         loadCommandLabel();
-        requestAnimationFrame(renderLoop);
+        renderLoop(performance.now());
     }
 
     function MemoryIsDifferent(one, two, length) {
@@ -534,14 +680,26 @@
     }
 
     function renderLoop(currentTime) {
-        const elapsed = currentTime - previousFrameTime;
-        previousFrameTime = currentTime;
-        instance.exports.UpdateDrawFrame(scratchSpaceAddress, window.innerWidth, window.innerHeight, window.mouseWheelXThisFrame, window.mouseWheelYThisFrame, window.mousePositionXThisFrame, window.mousePositionYThisFrame, window.touchDown, window.mouseDown, elapsed / 1000);
-        renderLoopHTML();
-        requestAnimationFrame(renderLoop);
-        window.mouseDown = false;
+        try {
+            const elapsed = currentTime - previousFrameTime;
+            previousFrameTime = currentTime;
+            const inputEvent = pendingInputEvents.shift() || { action: PROGTP_APP_ACTION_NONE, codepoint: 0 };
+            instance.exports.UpdateDrawFrame(scratchSpaceAddress, window.innerWidth, window.innerHeight, window.mouseWheelXThisFrame, window.mouseWheelYThisFrame, window.mousePositionXThisFrame, window.mousePositionYThisFrame, window.touchDown, window.mouseDown, inputEvent.action, inputEvent.codepoint, elapsed / 1000);
+            memoryDataView = new DataView(instance.exports.memory.buffer);
+            renderLoopHTML();
+            saveInventoryIfDirty();
+            requestAnimationFrame(renderLoop);
+            window.mouseDown = false;
+        } catch (error) {
+            document.body.dataset.renderError = String(error && error.stack ? error.stack : error);
+            throw error;
+        }
     }
-    init();
+    init().catch((error) => {
+        document.body.dataset.progtpInit = "failed";
+        document.body.dataset.progtpInitError = String(error && error.stack ? error.stack : error);
+        throw error;
+    });
 </script>
 
 <body>

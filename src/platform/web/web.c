@@ -5,24 +5,58 @@
 #include <clay.h>
 
 #include "app.h"
+#include "protocol.h"
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/emscripten.h>
+#define PROGTP_WEB_EXPORT EMSCRIPTEN_KEEPALIVE
+#else
+#define PROGTP_WEB_EXPORT
+#endif
 
 #define PROGTP_WEB_LABEL_CAPACITY 192u
+#define PROGTP_WEB_JSON_CAPACITY 262144u
 
-static char progtp_web_label[PROGTP_WEB_LABEL_CAPACITY] = "web: loading /api/hello";
-static bool progtp_web_measure_text_initialized;
+static char progtp_web_label[PROGTP_WEB_LABEL_CAPACITY] = "Mode: local | waiting for HTTP API";
+static char progtp_web_json[PROGTP_WEB_JSON_CAPACITY];
+static ProgTP_AppState progtp_web_app_state;
+static Clay_RenderCommandArray progtp_web_render_commands;
+static void *progtp_web_clay_memory;
+static bool progtp_web_app_initialized;
 
-__attribute__((import_module("clay"), import_name("measureTextFunction")))
-Clay_Dimensions ProgTP_WebMeasureTextImport(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data);
-
-static Clay_Dimensions ProgTP_WebMeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data) {
-    return ProgTP_WebMeasureTextImport(text, config, user_data);
+static Clay_Dimensions WebMeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data) {
+    (void)user_data;
+    float font_size = config ? (float)config->fontSize : 16.0f;
+    return (Clay_Dimensions){
+        .width = (float)text.length * font_size * 0.56f,
+        .height = font_size * 1.25f,
+    };
 }
 
-CLAY_WASM_EXPORT("UpdateDrawFrame")
-Clay_RenderCommandArray UpdateDrawFrame(
+static void EnsureWebAppInitialized(void) {
+    if (!progtp_web_app_initialized) {
+        ProgTP_AppInit(&progtp_web_app_state, false, NULL);
+        progtp_web_app_initialized = true;
+    }
+}
+
+PROGTP_WEB_EXPORT void InitializeClay(float width, float height) {
+    if (!progtp_web_clay_memory) {
+        progtp_web_clay_memory = malloc(Clay_MinMemorySize());
+    }
+    Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(Clay_MinMemorySize(), progtp_web_clay_memory);
+    Clay_Initialize(arena, (Clay_Dimensions){width, height}, (Clay_ErrorHandler){0});
+    Clay_GetCurrentContext()->errorHandler = (Clay_ErrorHandler){Clay__ErrorHandlerFunctionDefault, NULL};
+    Clay_SetMeasureTextFunction(WebMeasureText, NULL);
+}
+
+PROGTP_WEB_EXPORT void UpdateDrawFrame(
+    uint32_t render_commands_address,
     float width,
     float height,
     float mouse_wheel_x,
@@ -31,25 +65,90 @@ Clay_RenderCommandArray UpdateDrawFrame(
     float mouse_position_y,
     bool is_touch_down,
     bool is_mouse_down,
+    uint32_t action,
+    uint32_t codepoint,
     float delta_time) {
-    if (!progtp_web_measure_text_initialized) {
-        Clay_SetMeasureTextFunction(ProgTP_WebMeasureText, NULL);
-        progtp_web_measure_text_initialized = true;
+    EnsureWebAppInitialized();
+    bool was_input_active = progtp_web_app_state.input_mode != PROGTP_APP_INPUT_NONE || ProgTP_AppModalActive(&progtp_web_app_state);
+    ProgTP_AppHandleAction(&progtp_web_app_state, (ProgTP_AppAction)action);
+    if (was_input_active || action == PROGTP_APP_ACTION_NONE) {
+        ProgTP_AppHandleTextInput(&progtp_web_app_state, codepoint);
     }
 
     Clay_SetLayoutDimensions((Clay_Dimensions){ width, height });
     Clay_SetPointerState((Clay_Vector2){ mouse_position_x, mouse_position_y }, is_touch_down || is_mouse_down);
-    Clay_UpdateScrollContainers(is_touch_down, (Clay_Vector2){ mouse_wheel_x, mouse_wheel_y }, delta_time);
+    Clay_UpdateScrollContainers(is_touch_down || is_mouse_down, (Clay_Vector2){ mouse_wheel_x, mouse_wheel_y }, delta_time);
 
-    return ProgTP_BuildHelloWorldLayout(progtp_web_label, delta_time);
+    progtp_web_render_commands = ProgTP_AppBuildLayout(&progtp_web_app_state, progtp_web_label, delta_time);
+    memcpy((void *)(uintptr_t)render_commands_address, &progtp_web_render_commands, sizeof(progtp_web_render_commands));
 }
 
-CLAY_WASM_EXPORT("GetCommandLabelBuffer")
-uint32_t GetCommandLabelBuffer(void) {
+PROGTP_WEB_EXPORT uint32_t GetRenderCommandsBuffer(void) {
+    return (uint32_t)(uintptr_t)&progtp_web_render_commands;
+}
+
+PROGTP_WEB_EXPORT uint32_t GetCommandLabelBuffer(void) {
     return (uint32_t)(uintptr_t)progtp_web_label;
 }
 
-CLAY_WASM_EXPORT("GetCommandLabelCapacity")
-uint32_t GetCommandLabelCapacity(void) {
+PROGTP_WEB_EXPORT uint32_t GetCommandLabelCapacity(void) {
     return PROGTP_WEB_LABEL_CAPACITY;
+}
+
+PROGTP_WEB_EXPORT uint32_t GetInventoryJsonBuffer(void) {
+    return (uint32_t)(uintptr_t)progtp_web_json;
+}
+
+PROGTP_WEB_EXPORT uint32_t GetInventoryJsonCapacity(void) {
+    return PROGTP_WEB_JSON_CAPACITY;
+}
+
+PROGTP_WEB_EXPORT bool ImportInventoryJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppSetStatus(&progtp_web_app_state, "HTTP inventory is too large");
+        return false;
+    }
+    char error[256] = {0};
+    if (!ProgTP_EquipmentInventoryFromJson(progtp_web_json, json_length, &progtp_web_app_state.inventory, error, sizeof(error))) {
+        ProgTP_AppSetStatus(&progtp_web_app_state, error[0] ? error : "Invalid HTTP inventory JSON");
+        return false;
+    }
+    ProgTP_AppUseLoadedInventory(&progtp_web_app_state, "Loaded inventory from HTTP server");
+    return true;
+}
+
+PROGTP_WEB_EXPORT uint32_t ExportInventoryJson(void) {
+    EnsureWebAppInitialized();
+    size_t json_length = 0;
+    char *json = ProgTP_EquipmentInventoryToJson(&progtp_web_app_state.inventory, &json_length);
+    if (!json) {
+        ProgTP_AppSetStatus(&progtp_web_app_state, "Could not serialize inventory");
+        return 0;
+    }
+    if (json_length + 1u > PROGTP_WEB_JSON_CAPACITY) {
+        free(json);
+        ProgTP_AppSetStatus(&progtp_web_app_state, "Inventory JSON buffer is too small");
+        return 0;
+    }
+    memcpy(progtp_web_json, json, json_length);
+    progtp_web_json[json_length] = '\0';
+    free(json);
+    return (uint32_t)json_length;
+}
+
+PROGTP_WEB_EXPORT bool IsInventoryDirty(void) {
+    EnsureWebAppInitialized();
+    return ProgTP_AppInventoryDirty(&progtp_web_app_state);
+}
+
+PROGTP_WEB_EXPORT uint32_t GetInventoryVersion(void) {
+    EnsureWebAppInitialized();
+    return (uint32_t)ProgTP_AppInventoryVersion(&progtp_web_app_state);
+}
+
+PROGTP_WEB_EXPORT void MarkInventoryClean(void) {
+    EnsureWebAppInitialized();
+    ProgTP_AppMarkInventoryClean(&progtp_web_app_state);
+    ProgTP_AppSetStatus(&progtp_web_app_state, "Saved inventory to HTTP server");
 }

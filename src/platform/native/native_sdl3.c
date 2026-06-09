@@ -11,10 +11,11 @@
 #include "command_client.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 static Clay_Dimensions MeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data) {
-    TTF_Font **fonts = user_data;
+    TTF_Font **fonts = (TTF_Font **)user_data;
     TTF_Font *font = fonts[config->fontId];
     int width = 0;
     int height = 0;
@@ -53,7 +54,37 @@ static const char *FindDefaultFontPath(void) {
     return NULL;
 }
 
+static ProgTP_AppAction ActionFromKey(SDL_Keycode key) {
+    switch (key) {
+        case SDLK_N: return PROGTP_APP_ACTION_NEXT;
+        case SDLK_P: return PROGTP_APP_ACTION_PREVIOUS;
+        case SDLK_A: return PROGTP_APP_ACTION_ADD_SAMPLE;
+        case SDLK_U: return PROGTP_APP_ACTION_UPDATE_SELECTED;
+        case SDLK_R: return PROGTP_APP_ACTION_REMOVE_SELECTED;
+        case SDLK_1: return PROGTP_APP_ACTION_MODULE_1;
+        case SDLK_2: return PROGTP_APP_ACTION_MODULE_2;
+        case SDLK_3: return PROGTP_APP_ACTION_MODULE_3;
+        case SDLK_4: return PROGTP_APP_ACTION_MODULE_4;
+        case SDLK_5: return PROGTP_APP_ACTION_MODULE_5;
+        case SDLK_6: return PROGTP_APP_ACTION_MODULE_6;
+        case SDLK_7: return PROGTP_APP_ACTION_MODULE_7;
+        case SDLK_8: return PROGTP_APP_ACTION_MODULE_8;
+        case SDLK_C: return PROGTP_APP_ACTION_SEARCH_CODE;
+        case SDLK_I: return PROGTP_APP_ACTION_SEARCH_IP;
+        case SDLK_M: return PROGTP_APP_ACTION_SEARCH_MAC;
+        case SDLK_BACKSPACE: return PROGTP_APP_ACTION_INPUT_BACKSPACE;
+        case SDLK_RETURN: return PROGTP_APP_ACTION_INPUT_SUBMIT;
+        case SDLK_ESCAPE: return PROGTP_APP_ACTION_FORM_CANCEL;
+        case SDLK_TAB: return PROGTP_APP_ACTION_FORM_NEXT_FIELD;
+        case SDLK_W: return PROGTP_APP_ACTION_SAVE;
+        case SDLK_L: return PROGTP_APP_ACTION_LOAD;
+        default: break;
+    }
+    return PROGTP_APP_ACTION_NONE;
+}
+
 int main(int argc, char **argv) {
+    const char *remote_url = ProgTP_FindRemoteUrl(argc, argv);
     ProgTP_CommandResult command_result;
     char command_error[256] = {0};
     if (!ProgTP_LoadCommandResult(argc, argv, &command_result, command_error, sizeof(command_error))) {
@@ -62,6 +93,19 @@ int main(int argc, char **argv) {
     }
     char command_label[192];
     ProgTP_FormatCommandResultLabel(&command_result, command_label, sizeof(command_label));
+    ProgTP_AppState app_state;
+    ProgTP_AppInit(&app_state, remote_url == NULL, "equipamentos.dat");
+    if (remote_url) {
+        char inventory_error[256] = {0};
+        if (ProgTP_LoadRemoteInventory(remote_url, &app_state.inventory, inventory_error, sizeof(inventory_error))) {
+            ProgTP_AppUseLoadedInventory(&app_state, "Loaded inventory from HTTP server");
+            snprintf(command_label, sizeof(command_label), "%s", "Mode: connected to server | inventory stored on server PC");
+        } else {
+            char status[320];
+            snprintf(status, sizeof(status), "HTTP inventory load failed: %s", inventory_error);
+            ProgTP_AppSetStatus(&app_state, status);
+        }
+    }
 
     if (!SDL_Init(SDL_INIT_VIDEO) || !TTF_Init()) {
         SDL_Log("SDL init failed: %s", SDL_GetError());
@@ -74,6 +118,7 @@ int main(int argc, char **argv) {
         SDL_Log("SDL_CreateWindowAndRenderer failed: %s", SDL_GetError());
         return 1;
     }
+    SDL_StartTextInput(window);
 
     const char *font_path = FindDefaultFontPath();
     if (!font_path) {
@@ -93,6 +138,13 @@ int main(int argc, char **argv) {
     renderer_data.fonts[0] = TTF_OpenFont(font_path, 24);
     if (!renderer_data.fonts[0]) {
         SDL_Log("TTF_OpenFont failed: %s", SDL_GetError());
+        SDL_free((void *)renderer_data.fonts);
+        TTF_DestroyRendererTextEngine(renderer_data.textEngine);
+        SDL_DestroyRenderer(renderer_data.renderer);
+        SDL_DestroyWindow(window);
+        ProgTP_AppDestroy(&app_state);
+        TTF_Quit();
+        SDL_Quit();
         return 1;
     }
 
@@ -102,9 +154,10 @@ int main(int argc, char **argv) {
     int height = 0;
     SDL_GetRenderOutputSize(renderer_data.renderer, &width, &height);
     Clay_Initialize(clay_arena, (Clay_Dimensions){ (float)width, (float)height }, (Clay_ErrorHandler){ ProgTP_HandleClayError, NULL });
-    Clay_SetMeasureTextFunction(MeasureText, renderer_data.fonts);
+    Clay_SetMeasureTextFunction(MeasureText, (void *)renderer_data.fonts);
 
     bool running = true;
+    uint64_t last_save_attempt_version = 0;
     uint64_t previous_ticks = SDL_GetTicks();
     while (running) {
         SDL_Event event;
@@ -116,6 +169,17 @@ int main(int argc, char **argv) {
                 Clay_SetLayoutDimensions((Clay_Dimensions){ (float)width, (float)height });
             } else if (event.type == SDL_EVENT_MOUSE_WHEEL) {
                 Clay_UpdateScrollContainers(true, (Clay_Vector2){ event.wheel.x, event.wheel.y }, 0.01f);
+            } else if (event.type == SDL_EVENT_KEY_DOWN) {
+                ProgTP_AppAction action = ActionFromKey(event.key.key);
+                if ((app_state.input_mode != PROGTP_APP_INPUT_NONE || ProgTP_AppModalActive(&app_state)) &&
+                    action != PROGTP_APP_ACTION_INPUT_BACKSPACE &&
+                    action != PROGTP_APP_ACTION_INPUT_SUBMIT &&
+                    event.key.key >= 32u &&
+                    event.key.key <= 126u) {
+                    ProgTP_AppHandleTextInput(&app_state, (uint32_t)event.key.key);
+                } else {
+                    ProgTP_AppHandleAction(&app_state, action);
+                }
             }
         }
 
@@ -129,7 +193,23 @@ int main(int argc, char **argv) {
         float delta_time = (float)(ticks - previous_ticks) / 1000.0f;
         previous_ticks = ticks;
 
-        Clay_RenderCommandArray commands = ProgTP_BuildHelloWorldLayout(command_label, delta_time);
+        Clay_RenderCommandArray commands = ProgTP_AppBuildLayout(&app_state, command_label, delta_time);
+
+        if (remote_url && ProgTP_AppInventoryDirty(&app_state)) {
+            uint64_t version = ProgTP_AppInventoryVersion(&app_state);
+            if (version != last_save_attempt_version) {
+                char save_error[256] = {0};
+                last_save_attempt_version = version;
+                if (ProgTP_SaveRemoteInventory(remote_url, &app_state.inventory, save_error, sizeof(save_error))) {
+                    ProgTP_AppMarkInventoryClean(&app_state);
+                    ProgTP_AppSetStatus(&app_state, "Saved inventory to HTTP server");
+                } else {
+                    char status[320];
+                    snprintf(status, sizeof(status), "HTTP save failed: %s", save_error);
+                    ProgTP_AppSetStatus(&app_state, status);
+                }
+            }
+        }
 
         SDL_SetRenderDrawColor(renderer_data.renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer_data.renderer);
@@ -139,7 +219,7 @@ int main(int argc, char **argv) {
 
     if (renderer_data.fonts) {
         TTF_CloseFont(renderer_data.fonts[0]);
-        SDL_free(renderer_data.fonts);
+        SDL_free((void *)renderer_data.fonts);
     }
     if (renderer_data.textEngine) {
         TTF_DestroyRendererTextEngine(renderer_data.textEngine);
@@ -147,6 +227,7 @@ int main(int argc, char **argv) {
     SDL_DestroyRenderer(renderer_data.renderer);
     SDL_DestroyWindow(window);
     free(clay_arena.memory);
+    ProgTP_AppDestroy(&app_state);
     TTF_Quit();
     SDL_Quit();
     return 0;

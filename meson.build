@@ -59,6 +59,7 @@ src_inc = include_directories(
     'src',
     'src/app',
     'src/client',
+    'src/domain/inventory',
     'src/protocol',
 )
 
@@ -69,7 +70,8 @@ clay_root = clay_sp.get_variable('clay_root')
 common_sources = files('src/app/app.c')
 common_deps = [clay_dep]
 platform_targets = []
-protocol_sources = files('src/protocol/protocol.c')
+inventory_sources = files('src/domain/inventory/equipment_inventory.c')
+protocol_sources = files('src/protocol/protocol.c') + inventory_sources
 client_sources = files('src/client/command_client.c')
 lint_sources = common_sources + protocol_sources
 
@@ -79,7 +81,7 @@ web_opt = get_option('web')
 server_opt = get_option('server')
 
 needs_client_runtime = not native_opt.disabled() or not tui_opt.disabled()
-needs_json = needs_client_runtime or not server_opt.disabled()
+needs_json = needs_client_runtime or not server_opt.disabled() or not web_opt.disabled()
 
 if needs_client_runtime
     lint_sources += client_sources
@@ -276,18 +278,25 @@ web_env.set('EM_CACHE', meson.current_build_dir() / 'emscripten-cache')
 
 if web_cc.found()
     wasm_c_optimization = '-Os'
-    wasm_output = 'index.wasm'
+    wasm_binary_output = 'index.wasm'
+    wasm_binary_setting = []
     if release_size
         wasm_c_optimization = '-Oz'
         if wasm_opt.found()
-            wasm_output = 'index.unopt.wasm'
+            wasm_binary_output = 'index.raw.wasm'
+            wasm_binary_setting = ['-sWASM_BINARY_FILE=index.raw.wasm']
         endif
     endif
 
     wasm_compile = custom_target(
-        'progtp-web-wasm',
-        input: ['src/platform/web/web.c', 'src/app/app.c'],
-        output: wasm_output,
+        'progtp-web',
+        input: [
+            'src/platform/web/web.c',
+            'src/app/app.c',
+            'src/domain/inventory/equipment_inventory.c',
+            'src/protocol/protocol.c',
+        ],
+        output: ['index.js', wasm_binary_output],
         command: [
             web_cc,
             wasm_c_optimization,
@@ -296,42 +305,44 @@ if web_cc.found()
             '-flto',
             '-mbulk-memory',
             '--no-entry',
-            '-sSTANDALONE_WASM=1',
-            '-sERROR_ON_UNDEFINED_SYMBOLS=0',
+            '-sWASM=1',
+            '-sMODULARIZE=1',
+            '-sEXPORT_NAME=createProgTPModule',
+            '-sENVIRONMENT=web',
+            '-sEXPORTED_FUNCTIONS=["_InitializeClay","_UpdateDrawFrame","_GetCommandLabelBuffer","_GetCommandLabelCapacity","_GetRenderCommandsBuffer","_GetInventoryJsonBuffer","_GetInventoryJsonCapacity","_ImportInventoryJson","_ExportInventoryJson","_IsInventoryDirty","_GetInventoryVersion","_MarkInventoryClean"]',
+            '-sEXPORTED_RUNTIME_METHODS=["HEAPU8"]',
             '-sFILESYSTEM=0',
-            '-sINITIAL_MEMORY=33554432',
+            '-sINITIAL_MEMORY=67108864',
             '-sMALLOC=emmalloc',
             '-ffunction-sections',
             '-fdata-sections',
             '-I' + meson.current_source_dir() / 'src',
             '-I' + meson.current_source_dir() / 'src/app',
+            '-I' + meson.current_source_dir() / 'src/domain/inventory',
+            '-I' + meson.current_source_dir() / 'src/protocol',
+            '-I' + meson.current_source_dir() / 'subprojects/yyjson/src',
             '-I' + clay_root,
             '-Wl,--strip-all',
             '-Wl,--gc-sections',
-            '-Wl,--lto-O3',
-            '-Wl,--export=__heap_base',
-            '-Wl,--export=Clay_CreateArenaWithCapacityAndMemory',
-            '-Wl,--export=Clay_Initialize',
-            '-Wl,--export=Clay_MinMemorySize',
-            '-Wl,--export=Clay_PointerOver',
-            '-Wl,--export=GetCommandLabelBuffer',
-            '-Wl,--export=GetCommandLabelCapacity',
-            '-Wl,--export=UpdateDrawFrame',
-            '-Wl,--export-memory',
-            '-o', '@OUTPUT@',
+            '-o', '@OUTPUT0@',
+            '-Wl,--lto-O3'
+        ] + wasm_binary_setting + [
             '@INPUT0@',
             '@INPUT1@',
+            '@INPUT2@',
+            '@INPUT3@',
+            meson.current_source_dir() / 'subprojects/yyjson/src/yyjson.c',
         ],
         env: web_env,
         build_by_default: true,
-        install: not (release_size and wasm_opt.found()),
+        install: true,
         install_dir: get_option('datadir') / 'progtp-web',
     )
     wasm = wasm_compile
     if release_size and wasm_opt.found()
         wasm = custom_target(
             'progtp-web-wasm-opt',
-            input: wasm_compile,
+            input: wasm_compile[1],
             output: 'index.wasm',
             command: [
                 wasm_opt,

@@ -1,6 +1,8 @@
 #ifndef PROGTP_PROTOCOL_H
 #define PROGTP_PROTOCOL_H
 
+#include "equipment_inventory.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -13,5 +15,12 @@ void ProgTP_RunLocalCommand(ProgTP_CommandResult *result);
 char *ProgTP_CommandResultToJson(const ProgTP_CommandResult *result, size_t *json_length);
 bool ProgTP_CommandResultFromJson(const char *json, size_t json_length, ProgTP_CommandResult *result);
 void ProgTP_FormatCommandResultLabel(const ProgTP_CommandResult *result, char *buffer, size_t buffer_size);
+char *ProgTP_EquipmentInventoryToJson(const ProgTP_EquipmentInventory *inventory, size_t *json_length);
+bool ProgTP_EquipmentInventoryFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_EquipmentInventory *inventory,
+    char *error,
+    size_t error_size);
 
 #endif
