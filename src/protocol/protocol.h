@@ -1,6 +1,7 @@
 #ifndef PROGTP_PROTOCOL_H
 #define PROGTP_PROTOCOL_H
 
+#include "connectivity.h"
 #include "equipment_inventory.h"
 
 #include <stdbool.h>
@@ -20,6 +21,20 @@ bool ProgTP_EquipmentInventoryFromJson(
     const char *json,
     size_t json_length,
     ProgTP_EquipmentInventory *inventory,
+    char *error,
+    size_t error_size);
+char *ProgTP_ConnectivityRequestToJson(const ProgTP_ConnectivityRequest *request, size_t *json_length);
+bool ProgTP_ConnectivityRequestFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConnectivityRequest *request,
+    char *error,
+    size_t error_size);
+char *ProgTP_ConnectivityResultToJson(const ProgTP_ConnectivityResult *result, size_t *json_length);
+bool ProgTP_ConnectivityResultFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConnectivityResult *result,
     char *error,
     size_t error_size);
 

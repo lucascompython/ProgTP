@@ -224,3 +224,144 @@ bool ProgTP_EquipmentInventoryFromJson(
     yyjson_doc_free(doc);
     return ok;
 }
+
+char *ProgTP_ConnectivityRequestToJson(const ProgTP_ConnectivityRequest *request, size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "operation", ProgTP_ConnectivityOperationName(request->operation));
+    yyjson_mut_obj_add_uint(doc, root, "equipment_code", request->equipment_code);
+    yyjson_mut_obj_add_str(doc, root, "custom_command", request->custom_command);
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_ConnectivityRequestFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConnectivityRequest *request,
+    char *error,
+    size_t error_size) {
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        SetProtocolError(error, error_size, "invalid connectivity request JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *operation = yyjson_obj_get(root, "operation");
+    yyjson_val *equipment_code = yyjson_obj_get(root, "equipment_code");
+    yyjson_val *custom_command = yyjson_obj_get(root, "custom_command");
+    if (!yyjson_is_obj(root) ||
+        !yyjson_is_str(operation) ||
+        !yyjson_is_uint(equipment_code) ||
+        yyjson_get_uint(equipment_code) > UINT32_MAX ||
+        !yyjson_is_str(custom_command) ||
+        !ProgTP_ConnectivityOperationFromString(yyjson_get_str(operation), &request->operation)) {
+        yyjson_doc_free(doc);
+        SetProtocolError(error, error_size, "connectivity request has invalid fields");
+        return false;
+    }
+    request->equipment_code = (uint32_t)yyjson_get_uint(equipment_code);
+    CopyString(request->custom_command, sizeof(request->custom_command), yyjson_get_str(custom_command));
+    if (request->operation == PROGTP_CONNECTIVITY_CUSTOM && request->custom_command[0] == '\0') {
+        yyjson_doc_free(doc);
+        SetProtocolError(error, error_size, "custom command cannot be empty");
+        return false;
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
+char *ProgTP_ConnectivityResultToJson(const ProgTP_ConnectivityResult *result, size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_bool(doc, root, "command_succeeded", result->command_succeeded);
+    yyjson_mut_obj_add_bool(doc, root, "equipment_responded", result->equipment_responded);
+    yyjson_mut_obj_add_bool(doc, root, "inventory_changed", result->inventory_changed);
+    yyjson_mut_obj_add_bool(doc, root, "incident_created", result->incident_created);
+    yyjson_mut_obj_add_int(doc, root, "exit_code", result->exit_code);
+    yyjson_mut_obj_add_uint(doc, root, "equipment_code", result->equipment_code);
+    yyjson_mut_obj_add_uint(doc, root, "executed_count", result->executed_count);
+    yyjson_mut_obj_add_uint(doc, root, "responded_count", result->responded_count);
+    yyjson_mut_obj_add_uint(doc, root, "failed_count", result->failed_count);
+    yyjson_mut_obj_add_str(doc, root, "command", result->command);
+    yyjson_mut_obj_add_str(doc, root, "summary", result->summary);
+    yyjson_mut_obj_add_str(doc, root, "output_preview", result->output_preview);
+    yyjson_mut_obj_add_str(doc, root, "output_path", result->output_path);
+    yyjson_mut_obj_add_str(doc, root, "timestamp", result->timestamp);
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+static bool ReadRequiredBool(yyjson_val *object, const char *name, bool *destination, char *error, size_t error_size) {
+    yyjson_val *value = yyjson_obj_get(object, name);
+    if (!yyjson_is_bool(value)) {
+        char message[96];
+        snprintf(message, sizeof(message), "missing or invalid %s", name);
+        SetProtocolError(error, error_size, message);
+        return false;
+    }
+    *destination = yyjson_get_bool(value);
+    return true;
+}
+
+static bool ReadRequiredUint32(yyjson_val *object, const char *name, uint32_t *destination, char *error, size_t error_size) {
+    yyjson_val *value = yyjson_obj_get(object, name);
+    if (!yyjson_is_uint(value) || yyjson_get_uint(value) > UINT32_MAX) {
+        char message[96];
+        snprintf(message, sizeof(message), "missing or invalid %s", name);
+        SetProtocolError(error, error_size, message);
+        return false;
+    }
+    *destination = (uint32_t)yyjson_get_uint(value);
+    return true;
+}
+
+bool ProgTP_ConnectivityResultFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConnectivityResult *result,
+    char *error,
+    size_t error_size) {
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        SetProtocolError(error, error_size, "invalid connectivity result JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *exit_code = yyjson_obj_get(root, "exit_code");
+    if (!yyjson_is_obj(root) || !yyjson_is_int(exit_code)) {
+        yyjson_doc_free(doc);
+        SetProtocolError(error, error_size, "connectivity result has invalid fields");
+        return false;
+    }
+    memset(result, 0, sizeof(*result));
+    result->exit_code = (int)yyjson_get_sint(exit_code);
+    if (!ReadRequiredBool(root, "command_succeeded", &result->command_succeeded, error, error_size) ||
+        !ReadRequiredBool(root, "equipment_responded", &result->equipment_responded, error, error_size) ||
+        !ReadRequiredBool(root, "inventory_changed", &result->inventory_changed, error, error_size) ||
+        !ReadRequiredBool(root, "incident_created", &result->incident_created, error, error_size) ||
+        !ReadRequiredUint32(root, "equipment_code", &result->equipment_code, error, error_size) ||
+        !ReadRequiredUint32(root, "executed_count", &result->executed_count, error, error_size) ||
+        !ReadRequiredUint32(root, "responded_count", &result->responded_count, error, error_size) ||
+        !ReadRequiredUint32(root, "failed_count", &result->failed_count, error, error_size) ||
+        !ReadRequiredString(root, "command", result->command, sizeof(result->command), error, error_size) ||
+        !ReadRequiredString(root, "summary", result->summary, sizeof(result->summary), error, error_size) ||
+        !ReadRequiredString(root, "output_preview", result->output_preview, sizeof(result->output_preview), error, error_size) ||
+        !ReadRequiredString(root, "output_path", result->output_path, sizeof(result->output_path), error, error_size) ||
+        !ReadRequiredString(root, "timestamp", result->timestamp, sizeof(result->timestamp), error, error_size)) {
+        yyjson_doc_free(doc);
+        return false;
+    }
+    yyjson_doc_free(doc);
+    return true;
+}

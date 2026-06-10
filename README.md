@@ -100,8 +100,12 @@ Current overlays:
 
 ## TODO:
 
-- [ ] fix weird font rendering on native
+- [ ] see if for example i can use fio's helpers better instead of implementing my own
+- [ ] make the cursor look "clickable" on web and mobile
+- [ ] add a nice way to see reports in the app itself
 - [ ] add cli --help usage info
+- [ ] maybe structure project better for helper functions like comparing strings ignoring case, validating IP/MAC formats, etc in connectivity.c for example
+- [x] fix weird font rendering on native
 - [x] add warnings + linting
 - [x] support for wasm opt
 - [x] move to emscripten for web target

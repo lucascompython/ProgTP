@@ -58,7 +58,7 @@ static bool PerformHttpRequest(
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteResponse);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, response);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
 
     struct curl_slist *headers = NULL;
     if (body) {
@@ -142,4 +142,50 @@ bool ProgTP_SaveRemoteInventory(const char *remote_url, const ProgTP_EquipmentIn
     free(response.data);
     free(json);
     return ok;
+}
+
+bool ProgTP_RunRemoteConnectivity(
+    const char *remote_url,
+    const ProgTP_ConnectivityRequest *request,
+    ProgTP_ConnectivityResult *result,
+    char *error,
+    size_t error_size) {
+    size_t json_length = 0;
+    char *json = ProgTP_ConnectivityRequestToJson(request, &json_length);
+    if (!json) {
+        snprintf(error, error_size, "failed to serialize connectivity request");
+        return false;
+    }
+    char endpoint[512];
+    BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/connectivity/run");
+    ResponseBuffer response = {0};
+    bool requested = PerformHttpRequest(endpoint, "POST", json, json_length, &response, error, error_size);
+    free(json);
+    if (!requested) {
+        return false;
+    }
+    bool parsed = ProgTP_ConnectivityResultFromJson(response.data, response.length, result, error, error_size);
+    free(response.data);
+    if (!parsed && error_size > 0 && error[0] == '\0') {
+        snprintf(error, error_size, "server returned invalid connectivity JSON");
+    }
+    return parsed;
+}
+
+bool ProgTP_RunLocalConnectivity(
+    ProgTP_EquipmentInventory *inventory,
+    const ProgTP_ConnectivityRequest *request,
+    ProgTP_ConnectivityResult *result,
+    char *error,
+    size_t error_size) {
+    return ProgTP_ConnectivityExecute(
+        inventory,
+        request,
+        "resultado_ping.txt",
+        "resultado_comando.txt",
+        "log_monitorizacao.txt",
+        "incidentes.dat",
+        result,
+        error,
+        error_size);
 }

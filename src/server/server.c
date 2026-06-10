@@ -7,6 +7,10 @@
 #include <string.h>
 
 #define PROGTP_SERVER_INVENTORY_PATH "equipamentos.dat"
+#define PROGTP_SERVER_PING_OUTPUT_PATH "resultado_ping.txt"
+#define PROGTP_SERVER_CUSTOM_OUTPUT_PATH "resultado_comando.txt"
+#define PROGTP_SERVER_MONITORING_LOG_PATH "log_monitorizacao.txt"
+#define PROGTP_SERVER_INCIDENT_PATH "incidentes.dat"
 
 static bool StrEquals(fio_str_info_s value, const char *expected) {
     size_t expected_length = strlen(expected);
@@ -113,8 +117,77 @@ static void OnApiInventory(fio_http_s *request) {
     SendText(request, 405, "method not allowed\n");
 }
 
+static void OnApiConnectivityRun(fio_http_s *request) {
+    if (!StrEquals(fio_http_opath(request), "/api/connectivity/run")) {
+        fio_http_send_error_response(request, 404);
+        return;
+    }
+    if (!StrEquals(fio_http_method(request), "POST")) {
+        SendText(request, 405, "method not allowed\n");
+        return;
+    }
+
+    fio_http_body_seek(request, 0);
+    fio_str_info_s body = fio_http_body_read(request, (size_t)-1);
+    ProgTP_ConnectivityRequest connectivity_request = {0};
+    char error[256] = {0};
+    if (body.len == 0 ||
+        !ProgTP_ConnectivityRequestFromJson(
+            body.buf,
+            body.len,
+            &connectivity_request,
+            error,
+            sizeof(error))) {
+        SendText(request, 400, error[0] ? error : "invalid connectivity request");
+        return;
+    }
+
+    ProgTP_EquipmentInventory inventory;
+    ProgTP_EquipmentInventoryInit(&inventory);
+    if (!LoadServerInventory(&inventory, error, sizeof(error))) {
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        SendText(request, 500, error);
+        return;
+    }
+
+    ProgTP_ConnectivityResult result;
+    if (!ProgTP_ConnectivityExecute(
+            &inventory,
+            &connectivity_request,
+            PROGTP_SERVER_PING_OUTPUT_PATH,
+            PROGTP_SERVER_CUSTOM_OUTPUT_PATH,
+            PROGTP_SERVER_MONITORING_LOG_PATH,
+            PROGTP_SERVER_INCIDENT_PATH,
+            &result,
+            error,
+            sizeof(error))) {
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        SendText(request, 500, error);
+        return;
+    }
+    if (result.inventory_changed &&
+        !ProgTP_EquipmentInventorySaveBinary(
+            &inventory,
+            PROGTP_SERVER_INVENTORY_PATH,
+            error,
+            sizeof(error))) {
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        SendText(request, 500, error);
+        return;
+    }
+    ProgTP_EquipmentInventoryDestroy(&inventory);
+
+    size_t json_length = 0;
+    char *json = ProgTP_ConnectivityResultToJson(&result, &json_length);
+    if (!json) {
+        fio_http_send_error_response(request, 500);
+        return;
+    }
+    SendJson(request, 200, json, json_length);
+}
+
 static void OnStaticMiss(fio_http_s *request) {
-    SendText(request, 404, "ProgTP server. Try /api/inventory, /api/hello, or /index.html\n");
+    SendText(request, 404, "ProgTP server. Try /api/inventory, /api/connectivity/run, /api/hello, or /index.html\n");
 }
 
 int main(int argc, char **argv) {
@@ -157,6 +230,14 @@ int main(int argc, char **argv) {
             .on_http = OnApiInventory,
             .public_folder = FIO_STR_INFO2("", 0)) != 0) {
         fprintf(stderr, "failed to register /api/inventory route\n");
+        return 1;
+    }
+    if (fio_http_route(
+            listener,
+            "/api/connectivity/run",
+            .on_http = OnApiConnectivityRun,
+            .public_folder = FIO_STR_INFO2("", 0)) != 0) {
+        fprintf(stderr, "failed to register /api/connectivity/run route\n");
         return 1;
     }
 

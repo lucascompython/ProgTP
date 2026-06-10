@@ -145,6 +145,46 @@ int main(int argc, char **argv) {
 
         Clay_SetLayoutDimensions((Clay_Dimensions){ Clay_Termbox_Width(), Clay_Termbox_Height() });
         Clay_SetPointerState((Clay_Vector2){ (float)mouse_x, (float)mouse_y }, mouse_down);
+
+        ProgTP_ConnectivityRequest connectivity_request;
+        if (ProgTP_AppTakeConnectivityRequest(&app_state, &connectivity_request)) {
+            ProgTP_ConnectivityResult connectivity_result;
+            char connectivity_error[256] = {0};
+            bool connectivity_ok = remote_url
+                ? ProgTP_RunRemoteConnectivity(
+                    remote_url,
+                    &connectivity_request,
+                    &connectivity_result,
+                    connectivity_error,
+                    sizeof(connectivity_error))
+                : ProgTP_RunLocalConnectivity(
+                    &app_state.inventory,
+                    &connectivity_request,
+                    &connectivity_result,
+                    connectivity_error,
+                    sizeof(connectivity_error));
+            if (!connectivity_ok) {
+                ProgTP_AppFailConnectivityRequest(&app_state, connectivity_error);
+            } else if (remote_url && connectivity_result.inventory_changed) {
+                char inventory_error[256] = {0};
+                if (ProgTP_LoadRemoteInventory(
+                        remote_url,
+                        &app_state.inventory,
+                        inventory_error,
+                        sizeof(inventory_error))) {
+                    ProgTP_AppUseLoadedInventory(&app_state, "Reloaded inventory after server command");
+                    ProgTP_AppCompleteConnectivityRequest(&app_state, &connectivity_result, false);
+                } else {
+                    ProgTP_AppFailConnectivityRequest(&app_state, inventory_error);
+                }
+            } else {
+                ProgTP_AppCompleteConnectivityRequest(
+                    &app_state,
+                    &connectivity_result,
+                    remote_url == NULL);
+            }
+        }
+
         commands = ProgTP_AppBuildLayout(&app_state, command_label, 0.016f);
 
         if (remote_url && ProgTP_AppInventoryDirty(&app_state)) {

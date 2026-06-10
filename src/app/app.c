@@ -85,6 +85,7 @@ static const char *InputModeName(ProgTP_AppInputMode mode) {
         case PROGTP_APP_INPUT_SEARCH_CODE: return "Search code";
         case PROGTP_APP_INPUT_SEARCH_IP: return "Search IP";
         case PROGTP_APP_INPUT_SEARCH_MAC: return "Search MAC";
+        case PROGTP_APP_INPUT_CONNECTIVITY_COMMAND: return "Custom command";
         case PROGTP_APP_INPUT_NONE: break;
     }
     return "";
@@ -95,6 +96,7 @@ static const char *SearchPlaceholder(ProgTP_AppInputMode mode) {
         case PROGTP_APP_INPUT_SEARCH_CODE: return "Enter equipment code";
         case PROGTP_APP_INPUT_SEARCH_IP: return "Enter IP address";
         case PROGTP_APP_INPUT_SEARCH_MAC: return "Enter MAC address";
+        case PROGTP_APP_INPUT_CONNECTIVITY_COMMAND: return "Enter a command to run";
         case PROGTP_APP_INPUT_NONE: break;
     }
     return "Select Code, IP, or MAC";
@@ -163,6 +165,11 @@ void ProgTP_AppInit(ProgTP_AppState *state, bool persistence_enabled, const char
     memset(state, 0, sizeof(*state));
     state->active_module = 1;
     state->persistence_enabled = persistence_enabled;
+    snprintf(
+        state->connectivity_result.summary,
+        sizeof(state->connectivity_result.summary),
+        "%s",
+        "No connectivity test has been run");
     snprintf(state->storage_path, sizeof(state->storage_path), "%s", storage_path ? storage_path : "equipamentos.dat");
     ProgTP_EquipmentInventoryInit(&state->inventory);
     LoadInventory(state);
@@ -198,6 +205,43 @@ void ProgTP_AppMarkInventoryClean(ProgTP_AppState *state) {
 
 bool ProgTP_AppModalActive(const ProgTP_AppState *state) {
     return state->modal != PROGTP_APP_MODAL_NONE;
+}
+
+bool ProgTP_AppTakeConnectivityRequest(ProgTP_AppState *state, ProgTP_ConnectivityRequest *request) {
+    if (!state->connectivity_request_pending || state->connectivity_request_in_flight) {
+        return false;
+    }
+    *request = state->connectivity_request;
+    state->connectivity_request_pending = false;
+    state->connectivity_request_in_flight = true;
+    SetStatus(state, "Running connectivity command");
+    return true;
+}
+
+void ProgTP_AppCompleteConnectivityRequest(
+    ProgTP_AppState *state,
+    const ProgTP_ConnectivityResult *result,
+    bool inventory_changed_locally) {
+    state->connectivity_result = *result;
+    state->connectivity_has_result = true;
+    state->connectivity_request_in_flight = false;
+    if (inventory_changed_locally && result->inventory_changed) {
+        MarkInventoryChanged(state);
+    }
+    SetStatus(state, result->summary);
+    EnsureSelection(state);
+}
+
+void ProgTP_AppFailConnectivityRequest(ProgTP_AppState *state, const char *error) {
+    state->connectivity_request_pending = false;
+    state->connectivity_request_in_flight = false;
+    snprintf(
+        state->connectivity_result.summary,
+        sizeof(state->connectivity_result.summary),
+        "Connectivity command failed: %s",
+        error ? error : "unknown error");
+    state->connectivity_has_result = true;
+    SetStatus(state, state->connectivity_result.summary);
 }
 
 static bool IsFirstTypeOccurrence(const ProgTP_AppState *state, size_t item_index) {
@@ -364,6 +408,28 @@ static void MoveSelection(ProgTP_AppState *state, int direction) {
     SelectFilteredRowAt(state, next_index);
 }
 
+static void MoveInventorySelection(ProgTP_AppState *state, int direction) {
+    size_t count = state->inventory.array.length;
+    if (count == 0) {
+        state->selected_code = 0;
+        return;
+    }
+    size_t current = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (state->inventory.array.items[i].code == state->selected_code) {
+            current = i;
+            break;
+        }
+    }
+    size_t next;
+    if (direction > 0) {
+        next = (current + 1u) % count;
+    } else {
+        next = current == 0 ? count - 1u : current - 1u;
+    }
+    state->selected_code = state->inventory.array.items[next].code;
+}
+
 static char *FormFieldBuffer(ProgTP_AppState *state, ProgTP_AppFormField field, size_t *buffer_size) {
     switch (field) {
         case PROGTP_APP_FORM_NAME: *buffer_size = sizeof(state->form_name); return state->form_name;
@@ -516,7 +582,9 @@ static void AdvanceFormField(ProgTP_AppState *state, int direction) {
 
 static void StartInput(ProgTP_AppState *state, ProgTP_AppInputMode mode) {
     state->input_mode = mode;
-    state->input_text[0] = '\0';
+    if (mode != PROGTP_APP_INPUT_CONNECTIVITY_COMMAND) {
+        state->input_text[0] = '\0';
+    }
     snprintf(state->status, sizeof(state->status), "%s: type value and press Enter", InputModeName(mode));
 }
 
@@ -528,7 +596,38 @@ static void FocusSearchInput(ProgTP_AppState *state) {
     }
 }
 
+static void QueueConnectivityRequest(ProgTP_AppState *state, ProgTP_ConnectivityOperation operation) {
+    if (state->connectivity_request_pending || state->connectivity_request_in_flight) {
+        SetStatus(state, "A connectivity command is already running");
+        return;
+    }
+    if (operation != PROGTP_CONNECTIVITY_CUSTOM && !SelectedEquipment(state)) {
+        SetStatus(state, "Select equipment before running ping");
+        return;
+    }
+    if (operation == PROGTP_CONNECTIVITY_CUSTOM && state->connectivity_custom_command[0] == '\0') {
+        SetStatus(state, "Enter a custom command first");
+        state->input_mode = PROGTP_APP_INPUT_CONNECTIVITY_COMMAND;
+        return;
+    }
+    memset(&state->connectivity_request, 0, sizeof(state->connectivity_request));
+    state->connectivity_request.operation = operation;
+    state->connectivity_request.equipment_code = state->selected_code;
+    snprintf(
+        state->connectivity_request.custom_command,
+        sizeof(state->connectivity_request.custom_command),
+        "%s",
+        state->connectivity_custom_command);
+    state->connectivity_request_pending = true;
+    state->input_mode = PROGTP_APP_INPUT_NONE;
+    SetStatus(state, operation == PROGTP_CONNECTIVITY_CUSTOM ? "Custom command queued" : "Ping test queued");
+}
+
 static void SubmitInput(ProgTP_AppState *state) {
+    if (state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND) {
+        QueueConnectivityRequest(state, PROGTP_CONNECTIVITY_CUSTOM);
+        return;
+    }
     ProgTP_Equipment *equipment = NULL;
     if (state->input_mode == PROGTP_APP_INPUT_SEARCH_CODE) {
         equipment = ProgTP_EquipmentInventoryFindByCode(&state->inventory, (uint32_t)strtoul(state->input_text, NULL, 10));
@@ -621,14 +720,22 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
 
     if (state->input_mode != PROGTP_APP_INPUT_NONE) {
         if (action == PROGTP_APP_ACTION_INPUT_BACKSPACE) {
-            size_t length = strlen(state->input_text);
+            char *buffer = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
+                ? state->connectivity_custom_command
+                : state->input_text;
+            size_t length = strlen(buffer);
             if (length > 0) {
-                state->input_text[length - 1u] = '\0';
+                buffer[length - 1u] = '\0';
             }
             return;
         }
         if (action == PROGTP_APP_ACTION_INPUT_SUBMIT) {
             SubmitInput(state);
+            return;
+        }
+        if (state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND &&
+            action == PROGTP_APP_ACTION_CONNECTIVITY_RUN_CUSTOM) {
+            QueueConnectivityRequest(state, PROGTP_CONNECTIVITY_CUSTOM);
             return;
         }
         if (action != PROGTP_APP_ACTION_NONE) {
@@ -702,6 +809,36 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_FILTER_TYPE_NEXT: CycleTypeFilter(state, 1); break;
         case PROGTP_APP_ACTION_FILTER_STATE_PREVIOUS: CycleStateFilter(state, -1); break;
         case PROGTP_APP_ACTION_FILTER_STATE_NEXT: CycleStateFilter(state, 1); break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_PING_SELECTED:
+            QueueConnectivityRequest(state, PROGTP_CONNECTIVITY_PING_SELECTED);
+            break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_PING_ALL:
+            QueueConnectivityRequest(state, PROGTP_CONNECTIVITY_PING_ALL);
+            break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_COMMAND_FIELD:
+            StartInput(state, PROGTP_APP_INPUT_CONNECTIVITY_COMMAND);
+            break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_RUN_CUSTOM:
+            QueueConnectivityRequest(state, PROGTP_CONNECTIVITY_CUSTOM);
+            break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_PREVIOUS_TARGET: MoveInventorySelection(state, -1); break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_NEXT_TARGET: MoveInventorySelection(state, 1); break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_PAGE_PREVIOUS:
+            if (state->connectivity_row_offset == 0) {
+                size_t count = state->inventory.array.length;
+                state->connectivity_row_offset = count == 0 ? 0 : ((count - 1u) / PROGTP_VISIBLE_ROWS) * PROGTP_VISIBLE_ROWS;
+            } else {
+                state->connectivity_row_offset = state->connectivity_row_offset > PROGTP_VISIBLE_ROWS
+                    ? state->connectivity_row_offset - PROGTP_VISIBLE_ROWS
+                    : 0;
+            }
+            break;
+        case PROGTP_APP_ACTION_CONNECTIVITY_PAGE_NEXT:
+            if (state->inventory.array.length > PROGTP_VISIBLE_ROWS) {
+                size_t next = state->connectivity_row_offset + PROGTP_VISIBLE_ROWS;
+                state->connectivity_row_offset = next < state->inventory.array.length ? next : 0;
+            }
+            break;
         case PROGTP_APP_ACTION_NONE:
         case PROGTP_APP_ACTION_INPUT_BACKSPACE:
         case PROGTP_APP_ACTION_INPUT_SUBMIT:
@@ -731,12 +868,18 @@ void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint) {
     if (state->input_mode == PROGTP_APP_INPUT_NONE) {
         return;
     }
-    size_t length = strlen(state->input_text);
-    if (length + 1u >= sizeof(state->input_text)) {
+    char *buffer = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
+        ? state->connectivity_custom_command
+        : state->input_text;
+    size_t buffer_size = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
+        ? sizeof(state->connectivity_custom_command)
+        : sizeof(state->input_text);
+    size_t length = strlen(buffer);
+    if (length + 1u >= buffer_size) {
         return;
     }
-    state->input_text[length] = (char)codepoint;
-    state->input_text[length + 1u] = '\0';
+    buffer[length] = (char)codepoint;
+    buffer[length + 1u] = '\0';
 }
 
 static bool MatchesCurrentView(const ProgTP_AppState *state, const ProgTP_Equipment *equipment) {
@@ -806,8 +949,141 @@ static void PrepareRows(ProgTP_AppState *state) {
     snprintf(state->row_page_text, sizeof(state->row_page_text), "Showing %zu-%zu of %zu", first, last, state->filtered_count);
 }
 
+static void PrepareConnectivityOutputLines(ProgTP_AppState *state) {
+    state->connectivity_output_line_count = 0;
+    const char *cursor = state->connectivity_result.output_preview;
+    if (cursor[0] == '\0') {
+        snprintf(
+            state->connectivity_output_lines[0],
+            sizeof(state->connectivity_output_lines[0]),
+            "%.190s",
+            state->connectivity_result.summary);
+        state->connectivity_output_line_count = 1;
+        return;
+    }
+    while (*cursor && state->connectivity_output_line_count < 8u) {
+        char *line = state->connectivity_output_lines[state->connectivity_output_line_count];
+        size_t line_size = sizeof(state->connectivity_output_lines[0]);
+        size_t consumed = 0;
+        size_t output_length = 0;
+        while (cursor[consumed] && cursor[consumed] != '\n' && output_length + 1u < line_size) {
+            if (cursor[consumed] != '\r') {
+                line[output_length++] = cursor[consumed];
+            }
+            ++consumed;
+        }
+        line[output_length] = '\0';
+        ++state->connectivity_output_line_count;
+        cursor += consumed;
+        while (*cursor && *cursor != '\n') {
+            ++cursor;
+        }
+        while (*cursor == '\r' || *cursor == '\n') {
+            ++cursor;
+        }
+    }
+}
+
+static void PrepareConnectivityText(ProgTP_AppState *state) {
+    ProgTP_Equipment *selected = SelectedEquipment(state);
+    if (selected) {
+        snprintf(
+            state->connectivity_target_text,
+            sizeof(state->connectivity_target_text),
+            "#%u %s | %s",
+            selected->code,
+            selected->name,
+            selected->ip_address);
+    } else {
+        snprintf(state->connectivity_target_text, sizeof(state->connectivity_target_text), "%s", "No equipment selected");
+    }
+    snprintf(
+        state->connectivity_status_text,
+        sizeof(state->connectivity_status_text),
+        "%s",
+        state->connectivity_request_in_flight || state->connectivity_request_pending
+            ? "Running"
+            : state->connectivity_has_result ? (state->connectivity_result.command_succeeded ? "Completed" : "Failed") : "Ready");
+    snprintf(
+        state->connectivity_counts_text,
+        sizeof(state->connectivity_counts_text),
+        "%u run / %u replied / %u failed",
+        state->connectivity_result.executed_count,
+        state->connectivity_result.responded_count,
+        state->connectivity_result.failed_count);
+    snprintf(
+        state->connectivity_command_display,
+        sizeof(state->connectivity_command_display),
+        "%s%s",
+        state->connectivity_custom_command[0] != '\0'
+            ? state->connectivity_custom_command
+            : "Enter a command, for example: nslookup {ip}",
+        state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND ? "_" : "");
+
+    size_t count = state->inventory.array.length;
+    if (count == 0) {
+        state->connectivity_row_offset = 0;
+    } else if (state->connectivity_row_offset >= count) {
+        state->connectivity_row_offset = ((count - 1u) / PROGTP_VISIBLE_ROWS) * PROGTP_VISIBLE_ROWS;
+    }
+    size_t selected_index = (size_t)-1;
+    for (size_t i = 0; i < count; ++i) {
+        if (state->inventory.array.items[i].code == state->selected_code) {
+            selected_index = i;
+            break;
+        }
+    }
+    if (selected_index != (size_t)-1 &&
+        (selected_index < state->connectivity_row_offset ||
+         selected_index >= state->connectivity_row_offset + PROGTP_VISIBLE_ROWS)) {
+        state->connectivity_row_offset = (selected_index / PROGTP_VISIBLE_ROWS) * PROGTP_VISIBLE_ROWS;
+    }
+    state->connectivity_row_count = 0;
+    for (size_t i = state->connectivity_row_offset;
+         i < count && state->connectivity_row_count < PROGTP_VISIBLE_ROWS;
+         ++i) {
+        const ProgTP_Equipment *equipment = &state->inventory.array.items[i];
+        size_t row = state->connectivity_row_count++;
+        state->connectivity_row_codes[row] = equipment->code;
+        snprintf(
+            state->connectivity_row_texts[row],
+            sizeof(state->connectivity_row_texts[row]),
+            "#%u | %s | %s | %s",
+            equipment->code,
+            equipment->name,
+            equipment->ip_address,
+            ProgTP_EquipmentStateName(equipment->state));
+    }
+    if (count == 0) {
+        snprintf(state->connectivity_row_page_text, sizeof(state->connectivity_row_page_text), "%s", "No equipment");
+    } else {
+        snprintf(
+            state->connectivity_row_page_text,
+            sizeof(state->connectivity_row_page_text),
+            "Showing %zu-%zu of %zu",
+            state->connectivity_row_offset + 1u,
+            state->connectivity_row_offset + state->connectivity_row_count,
+            count);
+    }
+    PrepareConnectivityOutputLines(state);
+}
+
 static void PrepareText(ProgTP_AppState *state) {
-    ProgTP_EquipmentInventorySummary(&state->inventory, state->summary_text, sizeof(state->summary_text));
+    if (state->active_module == 1) {
+        ProgTP_EquipmentInventorySummary(&state->inventory, state->summary_text, sizeof(state->summary_text));
+    } else if (state->active_module == 2) {
+        snprintf(
+            state->summary_text,
+            sizeof(state->summary_text),
+            "%s",
+            "Execute ping tests, save raw command output, and log connectivity checks");
+    } else {
+        snprintf(
+            state->summary_text,
+            sizeof(state->summary_text),
+            "%s",
+            "Shared workspace for the practical assignment modules");
+    }
     snprintf(state->title_text, sizeof(state->title_text), "Module %d - %s", state->active_module, ModuleName(state->active_module));
     snprintf(state->total_metric_text, sizeof(state->total_metric_text), "%zu devices", state->inventory.array.length);
     snprintf(state->selected_metric_text, sizeof(state->selected_metric_text), "#%u", state->selected_code);
@@ -828,7 +1104,10 @@ static void PrepareText(ProgTP_AppState *state) {
         snprintf(state->selected_text, sizeof(state->selected_text), "No equipment selected");
     }
     if (state->input_mode != PROGTP_APP_INPUT_NONE) {
-        snprintf(state->help_text, sizeof(state->help_text), "%s: %s", InputModeName(state->input_mode), state->input_text);
+        const char *active_input = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
+            ? state->connectivity_custom_command
+            : state->input_text;
+        snprintf(state->help_text, sizeof(state->help_text), "%s: %.320s", InputModeName(state->input_mode), active_input);
         snprintf(
             state->search_display_text,
             sizeof(state->search_display_text),
@@ -852,6 +1131,7 @@ static void PrepareText(ProgTP_AppState *state) {
             active ? "_" : "");
     }
     PrepareRows(state);
+    PrepareConnectivityText(state);
 }
 
 static void TextLine(const char *text, uint16_t size, Clay_Color color) {
@@ -1272,6 +1552,187 @@ static void InventoryModule(ProgTP_AppState *state) {
     }
 }
 
+static void ConnectivityEquipmentRows(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("ConnectivityEquipmentTable"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = {
+                progtp_ui_compact ? CLAY_SIZING_GROW(0) : CLAY_SIZING_GROW(.min = 360.0f),
+                CLAY_SIZING_GROW(.min = 180.0f),
+            },
+            .childGap = 2,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(5),
+    }) {
+        CLAY(CLAY_ID("ConnectivityEquipmentHeader"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight() + 8.0f) },
+                .padding = { 10, 10, 4, 4 },
+                .childGap = 8,
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = COLOR_SURFACE_DARK,
+        }) {
+            CLAY(CLAY_ID("ConnectivityEquipmentTitle"), {
+                .layout = {
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap = 2,
+                },
+            }) {
+                TextLine("Ping targets", 13, COLOR_TEXT);
+                TextLine(state->connectivity_row_page_text, 12, COLOR_MUTED);
+            }
+            Button(410, "Prev Page", PROGTP_APP_ACTION_CONNECTIVITY_PAGE_PREVIOUS, false, false);
+            Button(411, "Next Page", PROGTP_APP_ACTION_CONNECTIVITY_PAGE_NEXT, false, false);
+        }
+        for (size_t i = 0; i < state->connectivity_row_count; ++i) {
+            bool selected = state->connectivity_row_codes[i] == state->selected_code;
+            CLAY(CLAY_IDI("ConnectivityEquipmentRow", (uint32_t)i), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = selected ? COLOR_ACCENT : (i % 2u == 0 ? COLOR_SURFACE : COLOR_SURFACE_ALT),
+            }) {
+                AttachInteraction(PROGTP_UI_SELECT_BASE + (uintptr_t)state->connectivity_row_codes[i]);
+                TextLine(state->connectivity_row_texts[i], 12, selected ? COLOR_WHITE : COLOR_TEXT);
+            }
+        }
+    }
+}
+
+static void ConnectivityResultPanel(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("ConnectivityResultPanel"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = {
+                progtp_ui_compact ? CLAY_SIZING_GROW(0) : CLAY_SIZING_FIXED(380.0f),
+                CLAY_SIZING_GROW(.min = 180.0f),
+            },
+            .padding = CLAY_PADDING_ALL(14),
+            .childGap = 7,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(5),
+    }) {
+        TextLine("Latest result", 16, COLOR_TEXT);
+        TextLine(state->connectivity_result.summary, 13, state->connectivity_result.failed_count > 0 ? COLOR_DANGER : COLOR_MUTED);
+        if (state->connectivity_has_result) {
+            TextLine(state->connectivity_result.command, 12, COLOR_ACCENT_DARK);
+            TextLine(state->connectivity_result.output_path, 12, COLOR_MUTED);
+            for (size_t i = 0; i < state->connectivity_output_line_count; ++i) {
+                TextLine(state->connectivity_output_lines[i], 12, COLOR_TEXT);
+            }
+        }
+    }
+}
+
+static void ConnectivityModule(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("ConnectivityModule"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+            .childGap = progtp_ui_compact ? 8 : 12,
+        },
+    }) {
+        CLAY(CLAY_ID("ConnectivityMetrics"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 10,
+            },
+        }) {
+            Metric("Target", state->connectivity_target_text);
+            Metric("Execution", state->connectivity_status_text);
+            Metric("Results", state->connectivity_counts_text);
+        }
+        CLAY(CLAY_ID("ConnectivityActions"), {
+            .layout = {
+                .layoutDirection = progtp_ui_compact ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = ControlGap(),
+            },
+        }) {
+            CLAY(CLAY_ID("ConnectivityPingActions"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap = ControlGap(),
+                },
+            }) {
+                Button(400, "Ping Selected", PROGTP_APP_ACTION_CONNECTIVITY_PING_SELECTED, true, false);
+                Button(401, "Ping All", PROGTP_APP_ACTION_CONNECTIVITY_PING_ALL, false, false);
+            }
+            CLAY(CLAY_ID("ConnectivityTargetActions"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap = ControlGap(),
+                    .childAlignment = { .x = CLAY_ALIGN_X_RIGHT },
+                },
+            }) {
+                Button(402, "Prev Target", PROGTP_APP_ACTION_CONNECTIVITY_PREVIOUS_TARGET, false, false);
+                Button(403, "Next Target", PROGTP_APP_ACTION_CONNECTIVITY_NEXT_TARGET, false, false);
+            }
+        }
+        CLAY(CLAY_ID("CustomCommandSection"), {
+            .layout = {
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 6,
+            },
+        }) {
+            TextLine("Custom command", 14, COLOR_TEXT);
+            CLAY(CLAY_ID("CustomCommandControls"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap = ControlGap(),
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+            }) {
+                CLAY(CLAY_ID("CustomCommandInput"), {
+                    .layout = {
+                        .sizing = { CLAY_SIZING_GROW(.min = 220.0f), CLAY_SIZING_FIXED(ControlHeight()) },
+                        .padding = { 10, 10, 0, 0 },
+                        .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = COLOR_SURFACE,
+                    .border = {
+                        .color = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND ? COLOR_ACCENT : COLOR_LINE,
+                        .width = {
+                            state->terminal_rendering ? 0 : 1,
+                            state->terminal_rendering ? 0 : 1,
+                            state->terminal_rendering ? 0 : 1,
+                            state->terminal_rendering ? 0 : 1,
+                            0,
+                        },
+                    },
+                    .cornerRadius = CLAY_CORNER_RADIUS(5),
+                }) {
+                    AttachInteraction(PROGTP_APP_ACTION_CONNECTIVITY_COMMAND_FIELD);
+                    TextLine(
+                        state->connectivity_command_display,
+                        13,
+                        state->connectivity_custom_command[0] == '\0' ? COLOR_MUTED : COLOR_TEXT);
+                }
+                Button(404, "Run Custom", PROGTP_APP_ACTION_CONNECTIVITY_RUN_CUSTOM, false, false);
+            }
+        }
+        CLAY(CLAY_ID("ConnectivityContent"), {
+            .layout = {
+                .layoutDirection = progtp_ui_compact ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                .childGap = 12,
+            },
+        }) {
+            ConnectivityEquipmentRows(state);
+            ConnectivityResultPanel(state);
+        }
+    }
+}
+
 static const char *ModuleFileName(int module) {
     static const char *file_names[] = {
         "",
@@ -1663,6 +2124,8 @@ static void ModalOverlay(ProgTP_AppState *state, Clay_Dimensions layout_dimensio
 static void MainModule(ProgTP_AppState *state) {
     if (state->active_module == 1) {
         InventoryModule(state);
+    } else if (state->active_module == 2) {
+        ConnectivityModule(state);
     } else {
         PlaceholderModule(state->active_module);
     }

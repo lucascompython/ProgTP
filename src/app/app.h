@@ -1,6 +1,7 @@
 #ifndef PROGTP_APP_H
 #define PROGTP_APP_H
 
+#include "connectivity.h"
 #include "equipment_inventory.h"
 
 #include <clay.h>
@@ -56,6 +57,14 @@ typedef enum {
     PROGTP_APP_ACTION_FORM_STATE_NEXT,
     PROGTP_APP_ACTION_FILTER_STATE_PREVIOUS,
     PROGTP_APP_ACTION_FILTER_STATE_NEXT,
+    PROGTP_APP_ACTION_CONNECTIVITY_PING_SELECTED,
+    PROGTP_APP_ACTION_CONNECTIVITY_PING_ALL,
+    PROGTP_APP_ACTION_CONNECTIVITY_COMMAND_FIELD,
+    PROGTP_APP_ACTION_CONNECTIVITY_RUN_CUSTOM,
+    PROGTP_APP_ACTION_CONNECTIVITY_PREVIOUS_TARGET,
+    PROGTP_APP_ACTION_CONNECTIVITY_NEXT_TARGET,
+    PROGTP_APP_ACTION_CONNECTIVITY_PAGE_PREVIOUS,
+    PROGTP_APP_ACTION_CONNECTIVITY_PAGE_NEXT,
 } ProgTP_AppAction;
 
 typedef enum {
@@ -70,6 +79,7 @@ typedef enum {
     PROGTP_APP_INPUT_SEARCH_CODE,
     PROGTP_APP_INPUT_SEARCH_IP,
     PROGTP_APP_INPUT_SEARCH_MAC,
+    PROGTP_APP_INPUT_CONNECTIVITY_COMMAND,
 } ProgTP_AppInputMode;
 
 typedef enum {
@@ -105,6 +115,9 @@ typedef struct {
     bool inventory_dirty;
     bool state_filter_enabled;
     bool form_pending;
+    bool connectivity_request_pending;
+    bool connectivity_request_in_flight;
+    bool connectivity_has_result;
     uint64_t inventory_version;
     char storage_path[128];
     char status[320];
@@ -136,6 +149,20 @@ typedef struct {
     char form_mac[PROGTP_EQUIPMENT_MAC_SIZE];
     char form_location[PROGTP_EQUIPMENT_LOCATION_SIZE];
     char type_filter[PROGTP_EQUIPMENT_TYPE_SIZE];
+    ProgTP_ConnectivityRequest connectivity_request;
+    ProgTP_ConnectivityResult connectivity_result;
+    char connectivity_custom_command[PROGTP_CONNECTIVITY_COMMAND_SIZE];
+    char connectivity_command_display[PROGTP_CONNECTIVITY_COMMAND_SIZE + 2u];
+    char connectivity_target_text[160];
+    char connectivity_status_text[64];
+    char connectivity_counts_text[96];
+    char connectivity_row_page_text[96];
+    char connectivity_row_texts[12][256];
+    uint32_t connectivity_row_codes[12];
+    size_t connectivity_row_count;
+    size_t connectivity_row_offset;
+    char connectivity_output_lines[8][192];
+    size_t connectivity_output_line_count;
 } ProgTP_AppState;
 
 void ProgTP_HandleClayError(Clay_ErrorData errorData);
@@ -148,6 +175,12 @@ bool ProgTP_AppInventoryDirty(const ProgTP_AppState *state);
 uint64_t ProgTP_AppInventoryVersion(const ProgTP_AppState *state);
 void ProgTP_AppMarkInventoryClean(ProgTP_AppState *state);
 bool ProgTP_AppModalActive(const ProgTP_AppState *state);
+bool ProgTP_AppTakeConnectivityRequest(ProgTP_AppState *state, ProgTP_ConnectivityRequest *request);
+void ProgTP_AppCompleteConnectivityRequest(
+    ProgTP_AppState *state,
+    const ProgTP_ConnectivityResult *result,
+    bool inventory_changed_locally);
+void ProgTP_AppFailConnectivityRequest(ProgTP_AppState *state, const char *error);
 void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action);
 void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint);
 Clay_RenderCommandArray ProgTP_AppBuildLayout(ProgTP_AppState *state, const char *target_name, float delta_time);

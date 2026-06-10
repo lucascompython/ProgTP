@@ -152,3 +152,54 @@ PROGTP_WEB_EXPORT void MarkInventoryClean(void) {
     ProgTP_AppMarkInventoryClean(&progtp_web_app_state);
     ProgTP_AppSetStatus(&progtp_web_app_state, "Saved inventory to HTTP server");
 }
+
+PROGTP_WEB_EXPORT uint32_t ExportConnectivityRequestJson(void) {
+    EnsureWebAppInitialized();
+    ProgTP_ConnectivityRequest request;
+    if (!ProgTP_AppTakeConnectivityRequest(&progtp_web_app_state, &request)) {
+        return 0;
+    }
+    size_t json_length = 0;
+    char *json = ProgTP_ConnectivityRequestToJson(&request, &json_length);
+    if (!json || json_length + 1u > PROGTP_WEB_JSON_CAPACITY) {
+        free(json);
+        ProgTP_AppFailConnectivityRequest(&progtp_web_app_state, "Could not serialize connectivity request");
+        return 0;
+    }
+    memcpy(progtp_web_json, json, json_length);
+    progtp_web_json[json_length] = '\0';
+    free(json);
+    return (uint32_t)json_length;
+}
+
+PROGTP_WEB_EXPORT bool ImportConnectivityResultJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppFailConnectivityRequest(&progtp_web_app_state, "Connectivity result is too large");
+        return false;
+    }
+    ProgTP_ConnectivityResult result;
+    char error[256] = {0};
+    if (!ProgTP_ConnectivityResultFromJson(
+            progtp_web_json,
+            json_length,
+            &result,
+            error,
+            sizeof(error))) {
+        ProgTP_AppFailConnectivityRequest(
+            &progtp_web_app_state,
+            error[0] ? error : "Invalid connectivity result");
+        return false;
+    }
+    ProgTP_AppCompleteConnectivityRequest(&progtp_web_app_state, &result, false);
+    return true;
+}
+
+PROGTP_WEB_EXPORT void FailConnectivityRequest(uint32_t message_length) {
+    EnsureWebAppInitialized();
+    if (message_length >= PROGTP_WEB_JSON_CAPACITY) {
+        message_length = PROGTP_WEB_JSON_CAPACITY - 1u;
+    }
+    progtp_web_json[message_length] = '\0';
+    ProgTP_AppFailConnectivityRequest(&progtp_web_app_state, progtp_web_json);
+}

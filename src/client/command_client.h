@@ -10,5 +10,17 @@ const char *ProgTP_FindRemoteUrl(int argc, char **argv);
 bool ProgTP_LoadCommandResult(int argc, char **argv, ProgTP_CommandResult *result, char *error, size_t error_size);
 bool ProgTP_LoadRemoteInventory(const char *remote_url, ProgTP_EquipmentInventory *inventory, char *error, size_t error_size);
 bool ProgTP_SaveRemoteInventory(const char *remote_url, const ProgTP_EquipmentInventory *inventory, char *error, size_t error_size);
+bool ProgTP_RunRemoteConnectivity(
+    const char *remote_url,
+    const ProgTP_ConnectivityRequest *request,
+    ProgTP_ConnectivityResult *result,
+    char *error,
+    size_t error_size);
+bool ProgTP_RunLocalConnectivity(
+    ProgTP_EquipmentInventory *inventory,
+    const ProgTP_ConnectivityRequest *request,
+    ProgTP_ConnectivityResult *result,
+    char *error,
+    size_t error_size);
 
 #endif
