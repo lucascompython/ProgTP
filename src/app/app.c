@@ -1,5 +1,7 @@
 #include "app.h"
 
+#include "progtp_text.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

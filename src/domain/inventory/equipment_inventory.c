@@ -1,18 +1,13 @@
 #include "equipment_inventory.h"
 
+#include "progtp_error.h"
+#include "progtp_text.h"
+#include "progtp_time.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(_WIN32)
-#include <string.h>
-#define PROGTP_STRCASECMP _stricmp
-#else
-#include <strings.h>
-#define PROGTP_STRCASECMP strcasecmp
-#endif
-#include <time.h>
-
 #define PROGTP_EQUIPMENT_FILE_MAGIC "PTPEQP1"
 #define PROGTP_EQUIPMENT_FILE_VERSION 1u
 
@@ -22,31 +17,6 @@ typedef struct {
     uint32_t next_code;
     uint64_t count;
 } ProgTP_EquipmentFileHeader;
-
-static void SetError(char *error, size_t error_size, const char *message) {
-    if (error_size == 0) {
-        return;
-    }
-    snprintf(error, error_size, "%s", message ? message : "unknown error");
-}
-
-static void CopyText(char *destination, size_t destination_size, const char *source) {
-    if (destination_size == 0) {
-        return;
-    }
-    snprintf(destination, destination_size, "%s", source ? source : "");
-}
-
-bool ProgTP_TextEqualsIgnoreCase(const char *left, const char *right) {
-    if (!left || !right) {
-        return false;
-    }
-    return PROGTP_STRCASECMP(left, right) == 0;
-}
-
-static bool TextIsEmpty(const char *value) {
-    return !value || value[0] == '\0';
-}
 
 static bool EnsureArrayCapacity(ProgTP_EquipmentArray *array, size_t required) {
     if (array->capacity >= required) {
@@ -75,8 +45,8 @@ static size_t FindIndexByCode(const ProgTP_EquipmentInventory *inventory, uint32
 }
 
 static bool ValidateInput(const ProgTP_EquipmentInventory *inventory, const ProgTP_EquipmentInput *input, uint32_t existing_code, char *error, size_t error_size) {
-    if (!input || TextIsEmpty(input->name) || TextIsEmpty(input->type) || TextIsEmpty(input->ip_address) || TextIsEmpty(input->mac_address)) {
-        SetError(error, error_size, "name, type, IP address, and MAC address are required");
+    if (!input || ProgTP_TextIsEmpty(input->name) || ProgTP_TextIsEmpty(input->type) || ProgTP_TextIsEmpty(input->ip_address) || ProgTP_TextIsEmpty(input->mac_address)) {
+        ProgTP_SetError(error, error_size, "name, type, IP address, and MAC address are required");
         return false;
     }
     for (size_t i = 0; i < inventory->array.length; ++i) {
@@ -85,11 +55,11 @@ static bool ValidateInput(const ProgTP_EquipmentInventory *inventory, const Prog
             continue;
         }
         if (strcmp(equipment->ip_address, input->ip_address) == 0) {
-            SetError(error, error_size, "another equipment already uses this IP address");
+            ProgTP_SetError(error, error_size, "another equipment already uses this IP address");
             return false;
         }
         if (ProgTP_TextEqualsIgnoreCase(equipment->mac_address, input->mac_address)) {
-            SetError(error, error_size, "another equipment already uses this MAC address");
+            ProgTP_SetError(error, error_size, "another equipment already uses this MAC address");
             return false;
         }
     }
@@ -127,15 +97,15 @@ bool ProgTP_EquipmentInputInit(
         return false;
     }
     memset(input, 0, sizeof(*input));
-    CopyText(input->name, sizeof(input->name), name);
-    CopyText(input->type, sizeof(input->type), type);
-    CopyText(input->brand, sizeof(input->brand), brand);
-    CopyText(input->model, sizeof(input->model), model);
-    CopyText(input->ip_address, sizeof(input->ip_address), ip_address);
-    CopyText(input->mac_address, sizeof(input->mac_address), mac_address);
-    CopyText(input->location, sizeof(input->location), location);
+    ProgTP_TextCopy(input->name, sizeof(input->name), name);
+    ProgTP_TextCopy(input->type, sizeof(input->type), type);
+    ProgTP_TextCopy(input->brand, sizeof(input->brand), brand);
+    ProgTP_TextCopy(input->model, sizeof(input->model), model);
+    ProgTP_TextCopy(input->ip_address, sizeof(input->ip_address), ip_address);
+    ProgTP_TextCopy(input->mac_address, sizeof(input->mac_address), mac_address);
+    ProgTP_TextCopy(input->location, sizeof(input->location), location);
     input->state = state;
-    ProgTP_CurrentDateString(input->last_checked, sizeof(input->last_checked));
+    ProgTP_FormatCurrentDate(input->last_checked, sizeof(input->last_checked));
     return true;
 }
 
@@ -149,23 +119,23 @@ bool ProgTP_EquipmentInventoryAdd(
         return false;
     }
     if (!EnsureArrayCapacity(&inventory->array, inventory->array.length + 1u)) {
-        SetError(error, error_size, "not enough memory to add equipment");
+        ProgTP_SetError(error, error_size, "not enough memory to add equipment");
         return false;
     }
 
     ProgTP_Equipment equipment = {0};
     equipment.code = inventory->next_code++;
-    CopyText(equipment.name, sizeof(equipment.name), input->name);
-    CopyText(equipment.type, sizeof(equipment.type), input->type);
-    CopyText(equipment.brand, sizeof(equipment.brand), input->brand);
-    CopyText(equipment.model, sizeof(equipment.model), input->model);
-    CopyText(equipment.ip_address, sizeof(equipment.ip_address), input->ip_address);
-    CopyText(equipment.mac_address, sizeof(equipment.mac_address), input->mac_address);
-    CopyText(equipment.location, sizeof(equipment.location), input->location);
+    ProgTP_TextCopy(equipment.name, sizeof(equipment.name), input->name);
+    ProgTP_TextCopy(equipment.type, sizeof(equipment.type), input->type);
+    ProgTP_TextCopy(equipment.brand, sizeof(equipment.brand), input->brand);
+    ProgTP_TextCopy(equipment.model, sizeof(equipment.model), input->model);
+    ProgTP_TextCopy(equipment.ip_address, sizeof(equipment.ip_address), input->ip_address);
+    ProgTP_TextCopy(equipment.mac_address, sizeof(equipment.mac_address), input->mac_address);
+    ProgTP_TextCopy(equipment.location, sizeof(equipment.location), input->location);
     equipment.state = input->state;
-    CopyText(equipment.last_checked, sizeof(equipment.last_checked), TextIsEmpty(input->last_checked) ? "" : input->last_checked);
-    if (TextIsEmpty(equipment.last_checked)) {
-        ProgTP_CurrentDateString(equipment.last_checked, sizeof(equipment.last_checked));
+    ProgTP_TextCopy(equipment.last_checked, sizeof(equipment.last_checked), ProgTP_TextIsEmpty(input->last_checked) ? "" : input->last_checked);
+    if (ProgTP_TextIsEmpty(equipment.last_checked)) {
+        ProgTP_FormatCurrentDate(equipment.last_checked, sizeof(equipment.last_checked));
     }
 
     inventory->array.items[inventory->array.length++] = equipment;
@@ -182,11 +152,11 @@ bool ProgTP_EquipmentInventoryRemove(
     size_t error_size) {
     size_t index = FindIndexByCode(inventory, code);
     if (index == (size_t)-1) {
-        SetError(error, error_size, "equipment code not found");
+        ProgTP_SetError(error, error_size, "equipment code not found");
         return false;
     }
     if (inventory->array.items[index].has_pending_incidents) {
-        SetError(error, error_size, "equipment cannot be removed because it has pending technical incidents");
+        ProgTP_SetError(error, error_size, "equipment cannot be removed because it has pending technical incidents");
         return false;
     }
     if (index + 1u < inventory->array.length) {
@@ -204,22 +174,22 @@ bool ProgTP_EquipmentInventoryUpdate(
     size_t error_size) {
     size_t index = FindIndexByCode(inventory, code);
     if (index == (size_t)-1) {
-        SetError(error, error_size, "equipment code not found");
+        ProgTP_SetError(error, error_size, "equipment code not found");
         return false;
     }
     if (!ValidateInput(inventory, input, code, error, error_size)) {
         return false;
     }
     ProgTP_Equipment *equipment = &inventory->array.items[index];
-    CopyText(equipment->name, sizeof(equipment->name), input->name);
-    CopyText(equipment->type, sizeof(equipment->type), input->type);
-    CopyText(equipment->brand, sizeof(equipment->brand), input->brand);
-    CopyText(equipment->model, sizeof(equipment->model), input->model);
-    CopyText(equipment->ip_address, sizeof(equipment->ip_address), input->ip_address);
-    CopyText(equipment->mac_address, sizeof(equipment->mac_address), input->mac_address);
-    CopyText(equipment->location, sizeof(equipment->location), input->location);
+    ProgTP_TextCopy(equipment->name, sizeof(equipment->name), input->name);
+    ProgTP_TextCopy(equipment->type, sizeof(equipment->type), input->type);
+    ProgTP_TextCopy(equipment->brand, sizeof(equipment->brand), input->brand);
+    ProgTP_TextCopy(equipment->model, sizeof(equipment->model), input->model);
+    ProgTP_TextCopy(equipment->ip_address, sizeof(equipment->ip_address), input->ip_address);
+    ProgTP_TextCopy(equipment->mac_address, sizeof(equipment->mac_address), input->mac_address);
+    ProgTP_TextCopy(equipment->location, sizeof(equipment->location), input->location);
     equipment->state = input->state;
-    CopyText(equipment->last_checked, sizeof(equipment->last_checked), input->last_checked);
+    ProgTP_TextCopy(equipment->last_checked, sizeof(equipment->last_checked), input->last_checked);
     return true;
 }
 
@@ -231,11 +201,11 @@ bool ProgTP_EquipmentInventorySetState(
     size_t error_size) {
     ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryFindByCode(inventory, code);
     if (!equipment) {
-        SetError(error, error_size, "equipment code not found");
+        ProgTP_SetError(error, error_size, "equipment code not found");
         return false;
     }
     equipment->state = state;
-    ProgTP_CurrentDateString(equipment->last_checked, sizeof(equipment->last_checked));
+    ProgTP_FormatCurrentDate(equipment->last_checked, sizeof(equipment->last_checked));
     return true;
 }
 
@@ -247,7 +217,7 @@ bool ProgTP_EquipmentInventorySetPendingIncidents(
     size_t error_size) {
     ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryFindByCode(inventory, code);
     if (!equipment) {
-        SetError(error, error_size, "equipment code not found");
+        ProgTP_SetError(error, error_size, "equipment code not found");
         return false;
     }
     equipment->has_pending_incidents = has_pending_incidents;
@@ -341,7 +311,7 @@ bool ProgTP_EquipmentInventoryLoadBinary(ProgTP_EquipmentInventory *inventory, c
         memcmp(header.magic, PROGTP_EQUIPMENT_FILE_MAGIC, sizeof(header.magic) - 1u) != 0 ||
         header.version != PROGTP_EQUIPMENT_FILE_VERSION) {
         fclose(file);
-        SetError(error, error_size, "invalid equipment inventory file");
+        ProgTP_SetError(error, error_size, "invalid equipment inventory file");
         return false;
     }
 
@@ -353,14 +323,14 @@ bool ProgTP_EquipmentInventoryLoadBinary(ProgTP_EquipmentInventory *inventory, c
             !EnsureArrayCapacity(&loaded.array, (size_t)header.count)) {
             fclose(file);
             ProgTP_EquipmentInventoryDestroy(&loaded);
-            SetError(error, error_size, "not enough memory to load equipment inventory");
+            ProgTP_SetError(error, error_size, "not enough memory to load equipment inventory");
             return false;
         }
         loaded.array.length = (size_t)header.count;
         if (fread(loaded.array.items, sizeof(*loaded.array.items), loaded.array.length, file) != loaded.array.length) {
             fclose(file);
             ProgTP_EquipmentInventoryDestroy(&loaded);
-            SetError(error, error_size, "failed to read equipment inventory records");
+            ProgTP_SetError(error, error_size, "failed to read equipment inventory records");
             return false;
         }
     }
@@ -378,7 +348,7 @@ bool ProgTP_EquipmentInventoryReplace(
     char *error,
     size_t error_size) {
     if (count > 0 && !items) {
-        SetError(error, error_size, "missing equipment records");
+        ProgTP_SetError(error, error_size, "missing equipment records");
         return false;
     }
 
@@ -386,29 +356,29 @@ bool ProgTP_EquipmentInventoryReplace(
     for (size_t i = 0; i < count; ++i) {
         const ProgTP_Equipment *equipment = &items[i];
         if (equipment->code == 0 ||
-            TextIsEmpty(equipment->name) ||
-            TextIsEmpty(equipment->type) ||
-            TextIsEmpty(equipment->ip_address) ||
-            TextIsEmpty(equipment->mac_address)) {
-            SetError(error, error_size, "loaded equipment has missing required fields");
+            ProgTP_TextIsEmpty(equipment->name) ||
+            ProgTP_TextIsEmpty(equipment->type) ||
+            ProgTP_TextIsEmpty(equipment->ip_address) ||
+            ProgTP_TextIsEmpty(equipment->mac_address)) {
+            ProgTP_SetError(error, error_size, "loaded equipment has missing required fields");
             return false;
         }
         if ((int)equipment->state < (int)PROGTP_EQUIPMENT_OPERATIONAL ||
             (int)equipment->state > (int)PROGTP_EQUIPMENT_DISABLED) {
-            SetError(error, error_size, "loaded equipment has invalid state");
+            ProgTP_SetError(error, error_size, "loaded equipment has invalid state");
             return false;
         }
         for (size_t j = i + 1u; j < count; ++j) {
             if (equipment->code == items[j].code) {
-                SetError(error, error_size, "loaded equipment contains duplicate codes");
+                ProgTP_SetError(error, error_size, "loaded equipment contains duplicate codes");
                 return false;
             }
             if (strcmp(equipment->ip_address, items[j].ip_address) == 0) {
-                SetError(error, error_size, "loaded equipment contains duplicate IP addresses");
+                ProgTP_SetError(error, error_size, "loaded equipment contains duplicate IP addresses");
                 return false;
             }
             if (ProgTP_TextEqualsIgnoreCase(equipment->mac_address, items[j].mac_address)) {
-                SetError(error, error_size, "loaded equipment contains duplicate MAC addresses");
+                ProgTP_SetError(error, error_size, "loaded equipment contains duplicate MAC addresses");
                 return false;
             }
         }
@@ -422,7 +392,7 @@ bool ProgTP_EquipmentInventoryReplace(
     if (count > 0) {
         if (!EnsureArrayCapacity(&loaded.array, count)) {
             ProgTP_EquipmentInventoryDestroy(&loaded);
-            SetError(error, error_size, "not enough memory to replace equipment inventory");
+            ProgTP_SetError(error, error_size, "not enough memory to replace equipment inventory");
             return false;
         }
         memcpy(loaded.array.items, items, count * sizeof(*items));
@@ -527,17 +497,3 @@ bool ProgTP_EquipmentStateFromString(const char *value, ProgTP_EquipmentState *s
     return false;
 }
 
-void ProgTP_CurrentDateString(char *buffer, size_t buffer_size) {
-#if defined(PROGTP_WEB)
-    CopyText(buffer, buffer_size, "2026-05-28");
-#else
-    time_t now = time(NULL);
-    struct tm local_time;
-#if defined(_WIN32)
-    localtime_s(&local_time, &now);
-#else
-    localtime_r(&now, &local_time);
-#endif
-    strftime(buffer, buffer_size, "%Y-%m-%d", &local_time);
-#endif
-}

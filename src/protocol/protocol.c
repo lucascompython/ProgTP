@@ -1,17 +1,14 @@
 #include "protocol.h"
 
+#include "progtp_error.h"
+#include "progtp_text.h"
+#include "progtp_time.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <yyjson.h>
-
-static void CopyString(char *destination, size_t destination_size, const char *source) {
-    if (destination_size == 0) {
-        return;
-    }
-    snprintf(destination, destination_size, "%s", source ? source : "");
-}
 
 void ProgTP_RunLocalCommand(ProgTP_CommandResult *result) {
     ProgTP_EquipmentInventory inventory;
@@ -23,7 +20,7 @@ void ProgTP_RunLocalCommand(ProgTP_CommandResult *result) {
     }
     ProgTP_EquipmentInventorySummary(&inventory, result->message, sizeof(result->message));
     ProgTP_EquipmentInventoryDestroy(&inventory);
-    CopyString(result->mode, sizeof(result->mode), "local");
+    ProgTP_TextCopy(result->mode, sizeof(result->mode), "local");
 }
 
 char *ProgTP_CommandResultToJson(const ProgTP_CommandResult *result, size_t *json_length) {
@@ -56,8 +53,8 @@ bool ProgTP_CommandResultFromJson(const char *json, size_t json_length, ProgTP_C
         return false;
     }
 
-    CopyString(result->message, sizeof(result->message), yyjson_get_str(message));
-    CopyString(result->mode, sizeof(result->mode), yyjson_get_str(mode));
+    ProgTP_TextCopy(result->message, sizeof(result->message), yyjson_get_str(message));
+    ProgTP_TextCopy(result->mode, sizeof(result->mode), yyjson_get_str(mode));
     yyjson_doc_free(doc);
     return true;
 }
@@ -70,28 +67,21 @@ void ProgTP_FormatCommandResultLabel(const ProgTP_CommandResult *result, char *b
     }
 }
 
-static void SetProtocolError(char *error, size_t error_size, const char *message) {
-    if (error_size == 0) {
-        return;
-    }
-    snprintf(error, error_size, "%s", message ? message : "invalid inventory JSON");
-}
-
 static bool ReadRequiredString(yyjson_val *object, const char *name, char *destination, size_t destination_size, char *error, size_t error_size) {
     yyjson_val *value = yyjson_obj_get(object, name);
     if (!yyjson_is_str(value)) {
         char message[96];
         snprintf(message, sizeof(message), "missing or invalid %s", name);
-        SetProtocolError(error, error_size, message);
+        ProgTP_SetError(error, error_size, message);
         return false;
     }
-    CopyString(destination, destination_size, yyjson_get_str(value));
+    ProgTP_TextCopy(destination, destination_size, yyjson_get_str(value));
     return true;
 }
 
 static void ReadOptionalString(yyjson_val *object, const char *name, char *destination, size_t destination_size) {
     yyjson_val *value = yyjson_obj_get(object, name);
-    CopyString(destination, destination_size, yyjson_is_str(value) ? yyjson_get_str(value) : "");
+    ProgTP_TextCopy(destination, destination_size, yyjson_is_str(value) ? yyjson_get_str(value) : "");
 }
 
 char *ProgTP_EquipmentInventoryToJson(const ProgTP_EquipmentInventory *inventory, size_t *json_length) {
@@ -136,7 +126,7 @@ bool ProgTP_EquipmentInventoryFromJson(
     size_t error_size) {
     yyjson_doc *doc = yyjson_read(json, json_length, 0);
     if (!doc) {
-        SetProtocolError(error, error_size, "invalid inventory JSON");
+        ProgTP_SetError(error, error_size, "invalid inventory JSON");
         return false;
     }
 
@@ -145,14 +135,14 @@ bool ProgTP_EquipmentInventoryFromJson(
     yyjson_val *items_value = yyjson_obj_get(root, "equipment");
     if (!yyjson_is_obj(root) || !yyjson_is_uint(next_code_value) || !yyjson_is_arr(items_value)) {
         yyjson_doc_free(doc);
-        SetProtocolError(error, error_size, "inventory JSON must contain next_code and equipment");
+        ProgTP_SetError(error, error_size, "inventory JSON must contain next_code and equipment");
         return false;
     }
 
     uint64_t next_code_u64 = yyjson_get_uint(next_code_value);
     if (next_code_u64 > UINT32_MAX) {
         yyjson_doc_free(doc);
-        SetProtocolError(error, error_size, "next_code is too large");
+        ProgTP_SetError(error, error_size, "next_code is too large");
         return false;
     }
 
@@ -161,13 +151,13 @@ bool ProgTP_EquipmentInventoryFromJson(
     if (item_count > 0) {
         if (item_count > SIZE_MAX / sizeof(*items)) {
             yyjson_doc_free(doc);
-            SetProtocolError(error, error_size, "inventory JSON is too large");
+            ProgTP_SetError(error, error_size, "inventory JSON is too large");
             return false;
         }
         items = calloc(item_count, sizeof(*items));
         if (!items) {
             yyjson_doc_free(doc);
-            SetProtocolError(error, error_size, "not enough memory to parse inventory JSON");
+            ProgTP_SetError(error, error_size, "not enough memory to parse inventory JSON");
             return false;
         }
     }
@@ -179,7 +169,7 @@ bool ProgTP_EquipmentInventoryFromJson(
         if (!yyjson_is_obj(item)) {
             free(items);
             yyjson_doc_free(doc);
-            SetProtocolError(error, error_size, "equipment entry must be an object");
+            ProgTP_SetError(error, error_size, "equipment entry must be an object");
             return false;
         }
 
@@ -188,7 +178,7 @@ bool ProgTP_EquipmentInventoryFromJson(
         if (!yyjson_is_uint(code_value) || yyjson_get_uint(code_value) > UINT32_MAX || !yyjson_is_str(state_value)) {
             free(items);
             yyjson_doc_free(doc);
-            SetProtocolError(error, error_size, "equipment entry has invalid code or state");
+            ProgTP_SetError(error, error_size, "equipment entry has invalid code or state");
             return false;
         }
 
@@ -207,12 +197,12 @@ bool ProgTP_EquipmentInventoryFromJson(
         ReadOptionalString(item, "location", equipment->location, sizeof(equipment->location));
         ReadOptionalString(item, "last_checked", equipment->last_checked, sizeof(equipment->last_checked));
         if (equipment->last_checked[0] == '\0') {
-            ProgTP_CurrentDateString(equipment->last_checked, sizeof(equipment->last_checked));
+            ProgTP_FormatCurrentDate(equipment->last_checked, sizeof(equipment->last_checked));
         }
         if (!ProgTP_EquipmentStateFromString(yyjson_get_str(state_value), &equipment->state)) {
             free(items);
             yyjson_doc_free(doc);
-            SetProtocolError(error, error_size, "equipment entry has unknown state");
+            ProgTP_SetError(error, error_size, "equipment entry has unknown state");
             return false;
         }
         yyjson_val *pending_value = yyjson_obj_get(item, "has_pending_incidents");
@@ -248,7 +238,7 @@ bool ProgTP_ConnectivityRequestFromJson(
     size_t error_size) {
     yyjson_doc *doc = yyjson_read(json, json_length, 0);
     if (!doc) {
-        SetProtocolError(error, error_size, "invalid connectivity request JSON");
+        ProgTP_SetError(error, error_size, "invalid connectivity request JSON");
         return false;
     }
     yyjson_val *root = yyjson_doc_get_root(doc);
@@ -262,14 +252,14 @@ bool ProgTP_ConnectivityRequestFromJson(
         !yyjson_is_str(custom_command) ||
         !ProgTP_ConnectivityOperationFromString(yyjson_get_str(operation), &request->operation)) {
         yyjson_doc_free(doc);
-        SetProtocolError(error, error_size, "connectivity request has invalid fields");
+        ProgTP_SetError(error, error_size, "connectivity request has invalid fields");
         return false;
     }
     request->equipment_code = (uint32_t)yyjson_get_uint(equipment_code);
-    CopyString(request->custom_command, sizeof(request->custom_command), yyjson_get_str(custom_command));
+    ProgTP_TextCopy(request->custom_command, sizeof(request->custom_command), yyjson_get_str(custom_command));
     if (request->operation == PROGTP_CONNECTIVITY_CUSTOM && request->custom_command[0] == '\0') {
         yyjson_doc_free(doc);
-        SetProtocolError(error, error_size, "custom command cannot be empty");
+        ProgTP_SetError(error, error_size, "custom command cannot be empty");
         return false;
     }
     yyjson_doc_free(doc);
@@ -307,7 +297,7 @@ static bool ReadRequiredBool(yyjson_val *object, const char *name, bool *destina
     if (!yyjson_is_bool(value)) {
         char message[96];
         snprintf(message, sizeof(message), "missing or invalid %s", name);
-        SetProtocolError(error, error_size, message);
+        ProgTP_SetError(error, error_size, message);
         return false;
     }
     *destination = yyjson_get_bool(value);
@@ -319,7 +309,7 @@ static bool ReadRequiredUint32(yyjson_val *object, const char *name, uint32_t *d
     if (!yyjson_is_uint(value) || yyjson_get_uint(value) > UINT32_MAX) {
         char message[96];
         snprintf(message, sizeof(message), "missing or invalid %s", name);
-        SetProtocolError(error, error_size, message);
+        ProgTP_SetError(error, error_size, message);
         return false;
     }
     *destination = (uint32_t)yyjson_get_uint(value);
@@ -334,14 +324,14 @@ bool ProgTP_ConnectivityResultFromJson(
     size_t error_size) {
     yyjson_doc *doc = yyjson_read(json, json_length, 0);
     if (!doc) {
-        SetProtocolError(error, error_size, "invalid connectivity result JSON");
+        ProgTP_SetError(error, error_size, "invalid connectivity result JSON");
         return false;
     }
     yyjson_val *root = yyjson_doc_get_root(doc);
     yyjson_val *exit_code = yyjson_obj_get(root, "exit_code");
     if (!yyjson_is_obj(root) || !yyjson_is_int(exit_code)) {
         yyjson_doc_free(doc);
-        SetProtocolError(error, error_size, "connectivity result has invalid fields");
+        ProgTP_SetError(error, error_size, "connectivity result has invalid fields");
         return false;
     }
     memset(result, 0, sizeof(*result));

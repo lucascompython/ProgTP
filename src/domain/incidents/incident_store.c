@@ -1,5 +1,7 @@
 #include "incident_store.h"
 
+#include "progtp_error.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,12 +15,6 @@ typedef struct {
     uint32_t next_number;
     uint64_t count;
 } ProgTP_IncidentFileHeader;
-
-static void SetError(char *error, size_t error_size, const char *message) {
-    if (error_size > 0) {
-        snprintf(error, error_size, "%s", message ? message : "incident storage error");
-    }
-}
 
 static bool ReadHeader(FILE *file, ProgTP_IncidentFileHeader *header) {
     return fread(header, sizeof(*header), 1u, file) == 1u &&
@@ -40,7 +36,7 @@ bool ProgTP_IncidentStoreAppendPingFailure(
     char *error,
     size_t error_size) {
     if (!path || !equipment) {
-        SetError(error, error_size, "missing incident path or equipment");
+        ProgTP_SetError(error, error_size, "missing incident path or equipment");
         return false;
     }
 
@@ -50,7 +46,7 @@ bool ProgTP_IncidentStoreAppendPingFailure(
     if (file) {
         if (!ReadHeader(file, &header)) {
             fclose(file);
-            SetError(error, error_size, "invalid incident binary file");
+            ProgTP_SetError(error, error_size, "invalid incident binary file");
             return false;
         }
     } else if (errno == ENOENT) {
@@ -59,13 +55,13 @@ bool ProgTP_IncidentStoreAppendPingFailure(
             if (file) {
                 fclose(file);
             }
-            SetError(error, error_size, "could not create incident binary file");
+            ProgTP_SetError(error, error_size, "could not create incident binary file");
             return false;
         }
     } else {
         char message[160];
         snprintf(message, sizeof(message), "could not open %s: %s", path, strerror(errno));
-        SetError(error, error_size, message);
+        ProgTP_SetError(error, error_size, message);
         return false;
     }
 
@@ -91,7 +87,7 @@ bool ProgTP_IncidentStoreAppendPingFailure(
         fwrite(&header, sizeof(header), 1u, file) == 1u &&
         fclose(file) == 0;
     if (!ok) {
-        SetError(error, error_size, "failed to append incident record");
+        ProgTP_SetError(error, error_size, "failed to append incident record");
     }
     return ok;
 }

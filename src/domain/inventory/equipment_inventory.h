@@ -133,7 +133,5 @@ void ProgTP_EquipmentInventorySummary(const ProgTP_EquipmentInventory *inventory
 void ProgTP_EquipmentFormatLine(const ProgTP_Equipment *equipment, char *buffer, size_t buffer_size);
 const char *ProgTP_EquipmentStateName(ProgTP_EquipmentState state);
 bool ProgTP_EquipmentStateFromString(const char *value, ProgTP_EquipmentState *state);
-void ProgTP_CurrentDateString(char *buffer, size_t buffer_size);
-bool ProgTP_TextEqualsIgnoreCase(const char *left, const char *right);
 
 #endif

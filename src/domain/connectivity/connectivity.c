@@ -1,13 +1,15 @@
 #include "connectivity.h"
 
 #include "incident_store.h"
+#include "progtp_error.h"
+#include "progtp_text.h"
+#include "progtp_time.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #if defined(_WIN32)
 #define PROGTP_POPEN _popen
@@ -17,25 +19,6 @@
 #define PROGTP_POPEN popen
 #define PROGTP_PCLOSE pclose
 #endif
-
-static void SetError(char *error, size_t error_size, const char *message) {
-    if (error_size > 0) {
-        snprintf(error, error_size, "%s", message ? message : "connectivity error");
-    }
-}
-
-static void CurrentTimestamp(char *buffer, size_t buffer_size) {
-    time_t now = time(NULL);
-    struct tm local_time;
-#if defined(_WIN32)
-    localtime_s(&local_time, &now);
-#else
-    localtime_r(&now, &local_time);
-#endif
-    if (strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", &local_time) == 0 && buffer_size > 0) {
-        buffer[0] = '\0';
-    }
-}
 
 static bool IsSafeIpAddress(const char *value) {
     if (!value || value[0] == '\0') {
@@ -47,24 +30,6 @@ static bool IsSafeIpAddress(const char *value) {
         }
     }
     return true;
-}
-
-static bool ContainsTextIgnoreCase(const char *text, const char *needle) {
-    size_t needle_length = strlen(needle);
-    if (needle_length == 0) {
-        return true;
-    }
-    for (const char *start = text; *start; ++start) {
-        size_t i = 0;
-        while (i < needle_length && start[i] &&
-               tolower((unsigned char)start[i]) == tolower((unsigned char)needle[i])) {
-            ++i;
-        }
-        if (i == needle_length) {
-            return true;
-        }
-    }
-    return false;
 }
 
 static void AppendPreview(char *preview, size_t preview_size, const char *data, size_t data_length) {
@@ -106,7 +71,7 @@ static bool RunCommand(
     char shell_command[PROGTP_CONNECTIVITY_COMMAND_SIZE + 16u];
     int written = snprintf(shell_command, sizeof(shell_command), "%s 2>&1", command);
     if (written < 0 || (size_t)written >= sizeof(shell_command)) {
-        SetError(error, error_size, "command is too long");
+        ProgTP_SetError(error, error_size, "command is too long");
         return false;
     }
 
@@ -115,7 +80,7 @@ static bool RunCommand(
     if (!pipe) {
         char message[160];
         snprintf(message, sizeof(message), "could not start command: %s", strerror(errno));
-        SetError(error, error_size, message);
+        ProgTP_SetError(error, error_size, message);
         return false;
     }
 
@@ -124,7 +89,7 @@ static bool RunCommand(
         size_t length = strlen(buffer);
         if (fwrite(buffer, 1u, length, output_file) != length) {
             PROGTP_PCLOSE(pipe);
-            SetError(error, error_size, "could not write command output");
+            ProgTP_SetError(error, error_size, "could not write command output");
             return false;
         }
         AppendPreview(preview, preview_size, buffer, length);
@@ -135,10 +100,10 @@ static bool RunCommand(
 
 static bool PingOutputIndicatesResponse(const char *output, int exit_code) {
     return exit_code == 0 &&
-        (ContainsTextIgnoreCase(output, "ttl=") ||
-         ContainsTextIgnoreCase(output, "bytes from") ||
-         ContainsTextIgnoreCase(output, "bytes=32") ||
-         ContainsTextIgnoreCase(output, "0% packet loss"));
+        (ProgTP_TextContainsIgnoreCase(output, "ttl=") ||
+         ProgTP_TextContainsIgnoreCase(output, "bytes from") ||
+         ProgTP_TextContainsIgnoreCase(output, "bytes=32") ||
+         ProgTP_TextContainsIgnoreCase(output, "0% packet loss"));
 }
 
 static bool ReadFileSection(
@@ -150,12 +115,12 @@ static bool ReadFileSection(
     size_t error_size) {
     FILE *file = fopen(path, "rb");
     if (!file) {
-        SetError(error, error_size, "could not read command output file");
+        ProgTP_SetError(error, error_size, "could not read command output file");
         return false;
     }
     if (fseek(file, offset, SEEK_SET) != 0) {
         fclose(file);
-        SetError(error, error_size, "could not seek command output file");
+        ProgTP_SetError(error, error_size, "could not seek command output file");
         return false;
     }
     size_t length = fread(buffer, 1u, buffer_size - 1u, file);
@@ -188,12 +153,12 @@ static bool ResolveCustomCommand(
     while (*cursor) {
         if (cursor[0] == '{' && cursor[1] == 'i' && cursor[2] == 'p' && cursor[3] == '}') {
             if (!equipment) {
-                SetError(error, error_size, "custom command uses {ip} but no equipment is selected");
+                ProgTP_SetError(error, error_size, "custom command uses {ip} but no equipment is selected");
                 return false;
             }
             size_t ip_length = strlen(equipment->ip_address);
             if (output_length + ip_length >= buffer_size) {
-                SetError(error, error_size, "custom command is too long after {ip} replacement");
+                ProgTP_SetError(error, error_size, "custom command is too long after {ip} replacement");
                 return false;
             }
             memcpy(buffer + output_length, equipment->ip_address, ip_length);
@@ -201,7 +166,7 @@ static bool ResolveCustomCommand(
             cursor += 4;
         } else {
             if (output_length + 1u >= buffer_size) {
-                SetError(error, error_size, "custom command is too long");
+                ProgTP_SetError(error, error_size, "custom command is too long");
                 return false;
             }
             buffer[output_length++] = *cursor++;
@@ -220,7 +185,7 @@ static bool AppendMonitoringLog(
     size_t error_size) {
     FILE *log = fopen(path, "a");
     if (!log) {
-        SetError(error, error_size, "could not open monitoring log");
+        ProgTP_SetError(error, error_size, "could not open monitoring log");
         return false;
     }
     int written = fprintf(
@@ -237,7 +202,7 @@ static bool AppendMonitoringLog(
     bool closed = fclose(log) == 0;
     bool ok = written > 0 && closed;
     if (!ok) {
-        SetError(error, error_size, "could not write monitoring log");
+        ProgTP_SetError(error, error_size, "could not write monitoring log");
     }
     return ok;
 }
@@ -253,7 +218,7 @@ static bool RunPing(
     size_t error_size) {
     char command[PROGTP_CONNECTIVITY_COMMAND_SIZE];
     if (!BuildPingCommand(equipment->ip_address, command, sizeof(command))) {
-        SetError(error, error_size, "equipment has an invalid IP address");
+        ProgTP_SetError(error, error_size, "equipment has an invalid IP address");
         return false;
     }
 
@@ -293,12 +258,12 @@ static bool RunPing(
                 result->timestamp,
                 incident_error,
                 sizeof(incident_error))) {
-            SetError(error, error_size, incident_error);
+            ProgTP_SetError(error, error_size, incident_error);
             return false;
         }
         result->incident_created = true;
     }
-    ProgTP_CurrentDateString(equipment->last_checked, sizeof(equipment->last_checked));
+    ProgTP_FormatCurrentDate(equipment->last_checked, sizeof(equipment->last_checked));
     result->inventory_changed = true;
 
     if (!AppendMonitoringLog(
@@ -324,16 +289,16 @@ bool ProgTP_ConnectivityExecute(
     char *error,
     size_t error_size) {
     if (!inventory || !request || !result) {
-        SetError(error, error_size, "missing connectivity request data");
+        ProgTP_SetError(error, error_size, "missing connectivity request data");
         return false;
     }
     memset(result, 0, sizeof(*result));
     result->exit_code = -1;
-    CurrentTimestamp(result->timestamp, sizeof(result->timestamp));
+    ProgTP_FormatCurrentTimestamp(result->timestamp, sizeof(result->timestamp));
 
     if (request->operation == PROGTP_CONNECTIVITY_CUSTOM) {
         if (request->custom_command[0] == '\0') {
-            SetError(error, error_size, "custom command cannot be empty");
+            ProgTP_SetError(error, error_size, "custom command cannot be empty");
             return false;
         }
         const ProgTP_Equipment *equipment = request->equipment_code == 0
@@ -352,7 +317,7 @@ bool ProgTP_ConnectivityExecute(
         snprintf(result->output_path, sizeof(result->output_path), "%s", custom_output_path);
         FILE *output = fopen(custom_output_path, "wb");
         if (!output) {
-            SetError(error, error_size, "could not create custom command output file");
+            ProgTP_SetError(error, error_size, "could not create custom command output file");
             return false;
         }
         bool ran = RunCommand(
@@ -366,7 +331,7 @@ bool ProgTP_ConnectivityExecute(
         bool closed = fclose(output) == 0;
         if (!ran || !closed) {
             if (ran) {
-                SetError(error, error_size, "could not close custom command output file");
+                ProgTP_SetError(error, error_size, "could not close custom command output file");
             }
             return false;
         }
@@ -390,7 +355,7 @@ bool ProgTP_ConnectivityExecute(
     snprintf(result->output_path, sizeof(result->output_path), "%s", ping_output_path);
     FILE *output = fopen(ping_output_path, "wb");
     if (!output) {
-        SetError(error, error_size, "could not create ping output file");
+        ProgTP_SetError(error, error_size, "could not create ping output file");
         return false;
     }
 
@@ -398,7 +363,7 @@ bool ProgTP_ConnectivityExecute(
     if (request->operation == PROGTP_CONNECTIVITY_PING_SELECTED) {
         ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryFindByCode(inventory, request->equipment_code);
         if (!equipment) {
-            SetError(error, error_size, "selected equipment was not found");
+            ProgTP_SetError(error, error_size, "selected equipment was not found");
             ok = false;
         } else {
             ok = RunPing(
@@ -426,7 +391,7 @@ bool ProgTP_ConnectivityExecute(
     }
 
     if (fclose(output) != 0 && ok) {
-        SetError(error, error_size, "could not close ping output file");
+        ProgTP_SetError(error, error_size, "could not close ping output file");
         ok = false;
     }
     if (!ok) {

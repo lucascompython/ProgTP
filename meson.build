@@ -18,6 +18,12 @@ project_warnings = cc.get_supported_arguments([
     '-Wstrict-prototypes',
 ])
 add_project_arguments(project_warnings, language: 'c')
+if cc.has_function('strlcpy', prefix: '#include <string.h>')
+    add_project_arguments('-DPROGTP_HAVE_STRLCPY=1', language: 'c')
+endif
+if cc.has_function('strcasestr', prefix: '#define _GNU_SOURCE\n#include <string.h>')
+    add_project_arguments('-DPROGTP_HAVE_STRCASESTR=1', language: 'c')
+endif
 server_warning_suppressions = cc.get_supported_arguments(['-Wno-unused-function'])
 static_subproject_options = ['default_library=static']
 release_subproject_options = []
@@ -59,6 +65,7 @@ src_inc = include_directories(
     'src',
     'src/app',
     'src/client',
+    'src/common',
     'src/domain/connectivity',
     'src/domain/incidents',
     'src/domain/inventory',
@@ -72,13 +79,18 @@ clay_root = clay_sp.get_variable('clay_root')
 common_sources = files('src/app/app.c')
 common_deps = [clay_dep]
 platform_targets = []
+support_sources = files(
+    'src/common/progtp_error.c',
+    'src/common/progtp_text.c',
+    'src/common/progtp_time.c',
+)
 inventory_sources = files('src/domain/inventory/equipment_inventory.c')
 incident_sources = files('src/domain/incidents/incident_store.c')
 connectivity_model_sources = files('src/domain/connectivity/connectivity_model.c')
 connectivity_sources = files('src/domain/connectivity/connectivity.c') + connectivity_model_sources + incident_sources
 protocol_sources = files('src/protocol/protocol.c') + inventory_sources
 client_sources = files('src/client/command_client.c')
-lint_sources = common_sources + protocol_sources + connectivity_sources
+lint_sources = support_sources + common_sources + protocol_sources + connectivity_sources
 
 native_opt = get_option('native')
 tui_opt = get_option('tui')
@@ -148,7 +160,7 @@ if not server_opt.disabled() and facil_sp.found()
     facil_dep = facil_sp.get_variable('facil_dep').as_system('system')
     server_exe = executable(
         'progtp-server',
-        ['src/server/server.c', protocol_sources, connectivity_sources],
+        ['src/server/server.c', support_sources, protocol_sources, connectivity_sources],
         c_args: server_warning_suppressions,
         dependencies: [facil_dep, yyjson_dep],
         include_directories: src_inc,
@@ -231,6 +243,7 @@ if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
         'progtp-native',
         [
             'src/platform/native/native_sdl3.c',
+            support_sources,
             common_sources,
             protocol_sources,
             client_sources,
@@ -257,6 +270,7 @@ if not tui_opt.disabled() and termbox2_sp.found()
         'progtp-tui',
         [
             'src/platform/tui/tui_termbox2.c',
+            support_sources,
             common_sources,
             protocol_sources,
             client_sources,
@@ -300,6 +314,9 @@ if web_cc.found()
         input: [
             'src/platform/web/web.c',
             'src/app/app.c',
+            'src/common/progtp_error.c',
+            'src/common/progtp_text.c',
+            'src/common/progtp_time.c',
             'src/domain/inventory/equipment_inventory.c',
             'src/domain/connectivity/connectivity_model.c',
             'src/protocol/protocol.c',
@@ -326,6 +343,7 @@ if web_cc.found()
             '-fdata-sections',
             '-I' + meson.current_source_dir() / 'src',
             '-I' + meson.current_source_dir() / 'src/app',
+            '-I' + meson.current_source_dir() / 'src/common',
             '-I' + meson.current_source_dir() / 'src/domain/inventory',
             '-I' + meson.current_source_dir() / 'src/domain/connectivity',
             '-I' + meson.current_source_dir() / 'src/protocol',
@@ -341,6 +359,9 @@ if web_cc.found()
             '@INPUT2@',
             '@INPUT3@',
             '@INPUT4@',
+            '@INPUT5@',
+            '@INPUT6@',
+            '@INPUT7@',
             meson.current_source_dir() / 'subprojects/yyjson/src/yyjson.c',
         ],
         env: web_env,
