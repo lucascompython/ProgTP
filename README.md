@@ -110,6 +110,7 @@ Current overlays:
 - [ ] add a nice way to see reports in the app itself
 - [ ] try to split the huge app.c file into ui files for each module
 - [ ] add cli --help usage info
+- [ ] add docs for usage, and docs for features of each module
 - [x] maybe structure project better for helper functions like comparing strings ignoring case, validating IP/MAC formats, etc in connectivity.c for example
 - [x] see if for example i can use fio's helpers better instead of implementing my own
 - [x] fix weird font rendering on native
