@@ -35,8 +35,37 @@ bool ProgTP_IncidentStoreAppendPingFailure(
     const char *timestamp,
     char *error,
     size_t error_size) {
-    if (!path || !equipment) {
-        ProgTP_SetError(error, error_size, "missing incident path or equipment");
+    char description[PROGTP_INCIDENT_DESCRIPTION_SIZE];
+    snprintf(
+        description,
+        sizeof(description),
+        "Equipment %s (%s) did not respond to ping",
+        equipment ? equipment->name : "",
+        equipment ? equipment->ip_address : "");
+    return ProgTP_IncidentStoreAppendGeneric(
+        path,
+        equipment ? equipment->code : 0u,
+        equipment ? equipment->name : "",
+        "Ping failure",
+        description,
+        "High",
+        timestamp,
+        error,
+        error_size);
+}
+
+bool ProgTP_IncidentStoreAppendGeneric(
+    const char *path,
+    uint32_t equipment_code,
+    const char *source,
+    const char *type,
+    const char *description,
+    const char *priority,
+    const char *timestamp,
+    char *error,
+    size_t error_size) {
+    if (!path || !source || source[0] == '\0') {
+        ProgTP_SetError(error, error_size, "missing incident path or source");
         return false;
     }
 
@@ -67,16 +96,11 @@ bool ProgTP_IncidentStoreAppendPingFailure(
 
     ProgTP_Incident incident = {0};
     incident.number = header.next_number++;
-    incident.equipment_code = equipment->code;
-    snprintf(incident.source, sizeof(incident.source), "%s", equipment->name);
-    snprintf(incident.type, sizeof(incident.type), "%s", "Ping failure");
-    snprintf(
-        incident.description,
-        sizeof(incident.description),
-        "Equipment %s (%s) did not respond to ping",
-        equipment->name,
-        equipment->ip_address);
-    snprintf(incident.priority, sizeof(incident.priority), "%s", "High");
+    incident.equipment_code = equipment_code;
+    snprintf(incident.source, sizeof(incident.source), "%s", source ? source : "");
+    snprintf(incident.type, sizeof(incident.type), "%s", type ? type : "");
+    snprintf(incident.description, sizeof(incident.description), "%s", description ? description : "");
+    snprintf(incident.priority, sizeof(incident.priority), "%s", priority ? priority : "");
     snprintf(incident.created_at, sizeof(incident.created_at), "%s", timestamp ? timestamp : "");
     incident.state = PROGTP_INCIDENT_PENDING;
     ++header.count;

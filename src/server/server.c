@@ -11,6 +11,9 @@
 #define PROGTP_SERVER_CUSTOM_OUTPUT_PATH "resultado_comando.txt"
 #define PROGTP_SERVER_MONITORING_LOG_PATH "log_monitorizacao.txt"
 #define PROGTP_SERVER_INCIDENT_PATH "incidentes.dat"
+#define PROGTP_SERVER_SENSOR_INPUT_PATH "sensores_rack.txt"
+#define PROGTP_SERVER_SENSOR_BINARY_PATH "leituras_sensores.dat"
+#define PROGTP_SERVER_SENSOR_LOG_PATH "log_sensores.txt"
 
 static bool StrEquals(fio_str_info_s value, const char *expected) {
     size_t expected_length = strlen(expected);
@@ -35,6 +38,10 @@ static bool LoadServerInventory(ProgTP_EquipmentInventory *inventory, char *erro
     }
     ProgTP_EquipmentInventorySeedDefaults(inventory);
     return ProgTP_EquipmentInventorySaveBinary(inventory, PROGTP_SERVER_INVENTORY_PATH, error, error_size);
+}
+
+static bool LoadServerSensors(ProgTP_SensorStore *store, char *error, size_t error_size) {
+    return ProgTP_SensorStoreLoadBinary(store, PROGTP_SERVER_SENSOR_BINARY_PATH, error, error_size);
 }
 
 static void OnApiHello(fio_http_s *request) {
@@ -186,8 +193,78 @@ static void OnApiConnectivityRun(fio_http_s *request) {
     SendJson(request, 200, json, json_length);
 }
 
+static void OnApiSensors(fio_http_s *request) {
+    if (!StrEquals(fio_http_opath(request), "/api/sensors")) {
+        fio_http_send_error_response(request, 404);
+        return;
+    }
+    if (!StrEquals(fio_http_method(request), "GET")) {
+        SendText(request, 405, "method not allowed\n");
+        return;
+    }
+
+    char error[256] = {0};
+    ProgTP_SensorStore store;
+    ProgTP_SensorStoreInit(&store);
+    if (!LoadServerSensors(&store, error, sizeof(error))) {
+        ProgTP_SensorStoreDestroy(&store);
+        SendText(request, 500, error);
+        return;
+    }
+    size_t json_length = 0;
+    char *json = ProgTP_SensorStoreToJson(&store, &json_length);
+    ProgTP_SensorStoreDestroy(&store);
+    if (!json) {
+        fio_http_send_error_response(request, 500);
+        return;
+    }
+    SendJson(request, 200, json, json_length);
+}
+
+static void OnApiSensorsImport(fio_http_s *request) {
+    if (!StrEquals(fio_http_opath(request), "/api/sensors/import")) {
+        fio_http_send_error_response(request, 404);
+        return;
+    }
+    if (!StrEquals(fio_http_method(request), "POST")) {
+        SendText(request, 405, "method not allowed\n");
+        return;
+    }
+
+    char error[256] = {0};
+    ProgTP_SensorStore store;
+    ProgTP_SensorStoreInit(&store);
+    if (!LoadServerSensors(&store, error, sizeof(error))) {
+        ProgTP_SensorStoreDestroy(&store);
+        SendText(request, 500, error);
+        return;
+    }
+    ProgTP_SensorImportResult result;
+    if (!ProgTP_SensorStoreImportText(
+            &store,
+            PROGTP_SERVER_SENSOR_INPUT_PATH,
+            PROGTP_SERVER_SENSOR_BINARY_PATH,
+            PROGTP_SERVER_SENSOR_LOG_PATH,
+            PROGTP_SERVER_INCIDENT_PATH,
+            &result,
+            error,
+            sizeof(error))) {
+        ProgTP_SensorStoreDestroy(&store);
+        SendText(request, 500, error);
+        return;
+    }
+    size_t json_length = 0;
+    char *json = ProgTP_SensorImportResponseToJson(&result, &store, &json_length);
+    ProgTP_SensorStoreDestroy(&store);
+    if (!json) {
+        fio_http_send_error_response(request, 500);
+        return;
+    }
+    SendJson(request, 200, json, json_length);
+}
+
 static void OnStaticMiss(fio_http_s *request) {
-    SendText(request, 404, "ProgTP server. Try /api/inventory, /api/connectivity/run, /api/hello, or /index.html\n");
+    SendText(request, 404, "ProgTP server. Try /api/inventory, /api/sensors, /api/connectivity/run, /api/hello, or /index.html\n");
 }
 
 int main(int argc, char **argv) {
@@ -238,6 +315,22 @@ int main(int argc, char **argv) {
             .on_http = OnApiConnectivityRun,
             .public_folder = FIO_STR_INFO2("", 0)) != 0) {
         fprintf(stderr, "failed to register /api/connectivity/run route\n");
+        return 1;
+    }
+    if (fio_http_route(
+            listener,
+            "/api/sensors",
+            .on_http = OnApiSensors,
+            .public_folder = FIO_STR_INFO2("", 0)) != 0) {
+        fprintf(stderr, "failed to register /api/sensors route\n");
+        return 1;
+    }
+    if (fio_http_route(
+            listener,
+            "/api/sensors/import",
+            .on_http = OnApiSensorsImport,
+            .public_folder = FIO_STR_INFO2("", 0)) != 0) {
+        fprintf(stderr, "failed to register /api/sensors/import route\n");
         return 1;
     }
 

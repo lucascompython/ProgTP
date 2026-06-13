@@ -5,6 +5,7 @@
 #endif
 
 #include <string.h>
+#include <ctype.h>
 
 #if defined(_WIN32)
 #include <string.h>
@@ -67,4 +68,30 @@ bool ProgTP_TextContainsIgnoreCase(const char *text, const char *needle) {
     }
     return false;
 #endif
+}
+
+char *ProgTP_TextTrimLeft(char *value) {
+    if (!value) {
+        return NULL;
+    }
+    while (*value && isspace((unsigned char)*value)) {
+        ++value;
+    }
+    return value;
+}
+
+void ProgTP_TextTrimRight(char *value) {
+    if (!value) {
+        return;
+    }
+    size_t length = strlen(value);
+    while (length > 0 && isspace((unsigned char)value[length - 1u])) {
+        value[--length] = '\0';
+    }
+}
+
+char *ProgTP_TextTrim(char *value) {
+    char *trimmed = ProgTP_TextTrimLeft(value);
+    ProgTP_TextTrimRight(trimmed);
+    return trimmed;
 }

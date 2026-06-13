@@ -3,6 +3,7 @@
 
 #include "connectivity.h"
 #include "equipment_inventory.h"
+#include "sensor_store.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -21,6 +22,24 @@ bool ProgTP_EquipmentInventoryFromJson(
     const char *json,
     size_t json_length,
     ProgTP_EquipmentInventory *inventory,
+    char *error,
+    size_t error_size);
+char *ProgTP_SensorStoreToJson(const ProgTP_SensorStore *store, size_t *json_length);
+bool ProgTP_SensorStoreFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_SensorStore *store,
+    char *error,
+    size_t error_size);
+char *ProgTP_SensorImportResponseToJson(
+    const ProgTP_SensorImportResult *result,
+    const ProgTP_SensorStore *store,
+    size_t *json_length);
+bool ProgTP_SensorImportResponseFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_SensorImportResult *result,
+    ProgTP_SensorStore *store,
     char *error,
     size_t error_size);
 char *ProgTP_ConnectivityRequestToJson(const ProgTP_ConnectivityRequest *request, size_t *json_length);

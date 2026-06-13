@@ -9,6 +9,7 @@ project(
 cmake = import('cmake')
 fs = import('fs')
 cc = meson.get_compiler('c')
+thread_dep = dependency('threads')
 release_size = get_option('release_size')
 
 project_warnings = cc.get_supported_arguments([
@@ -69,6 +70,7 @@ src_inc = include_directories(
     'src/domain/connectivity',
     'src/domain/incidents',
     'src/domain/inventory',
+    'src/domain/sensors',
     'src/protocol',
 )
 
@@ -86,11 +88,12 @@ support_sources = files(
 )
 inventory_sources = files('src/domain/inventory/equipment_inventory.c')
 incident_sources = files('src/domain/incidents/incident_store.c')
+sensor_sources = files('src/domain/sensors/sensor_store.c')
 connectivity_model_sources = files('src/domain/connectivity/connectivity_model.c')
 connectivity_sources = files('src/domain/connectivity/connectivity.c') + connectivity_model_sources + incident_sources
 protocol_sources = files('src/protocol/protocol.c') + inventory_sources
 client_sources = files('src/client/command_client.c')
-lint_sources = support_sources + common_sources + protocol_sources + connectivity_sources
+lint_sources = support_sources + common_sources + protocol_sources + connectivity_sources + sensor_sources
 
 native_opt = get_option('native')
 tui_opt = get_option('tui')
@@ -160,7 +163,7 @@ if not server_opt.disabled() and facil_sp.found()
     facil_dep = facil_sp.get_variable('facil_dep').as_system('system')
     server_exe = executable(
         'progtp-server',
-        ['src/server/server.c', support_sources, protocol_sources, connectivity_sources],
+        ['src/server/server.c', support_sources, protocol_sources, connectivity_sources, sensor_sources],
         c_args: server_warning_suppressions,
         dependencies: [facil_dep, yyjson_dep],
         include_directories: src_inc,
@@ -248,6 +251,7 @@ if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
             protocol_sources,
             client_sources,
             connectivity_sources,
+            sensor_sources,
         ],
         dependencies: common_deps + [sdl3_dep, sdl3_ttf_dep, sdl3_image_dep, yyjson_dep, curl_dep],
         include_directories: src_inc,
@@ -275,6 +279,7 @@ if not tui_opt.disabled() and termbox2_sp.found()
             protocol_sources,
             client_sources,
             connectivity_sources,
+            sensor_sources,
         ],
         c_args: ['-D_DEFAULT_SOURCE'],
         dependencies: common_deps + [
@@ -283,6 +288,7 @@ if not tui_opt.disabled() and termbox2_sp.found()
             stb_m_dep,
             yyjson_dep,
             curl_dep,
+            thread_dep,
         ],
         include_directories: src_inc,
         install: true,
@@ -319,6 +325,8 @@ if web_cc.found()
             'src/common/progtp_time.c',
             'src/domain/inventory/equipment_inventory.c',
             'src/domain/connectivity/connectivity_model.c',
+            'src/domain/incidents/incident_store.c',
+            'src/domain/sensors/sensor_store.c',
             'src/protocol/protocol.c',
         ],
         output: ['index.js', wasm_binary_output],
@@ -334,7 +342,7 @@ if web_cc.found()
             '-sMODULARIZE=1',
             '-sEXPORT_NAME=createProgTPModule',
             '-sENVIRONMENT=web',
-            '-sEXPORTED_FUNCTIONS=["_InitializeClay","_UpdateDrawFrame","_GetCommandLabelBuffer","_GetCommandLabelCapacity","_GetRenderCommandsBuffer","_GetInventoryJsonBuffer","_GetInventoryJsonCapacity","_ImportInventoryJson","_ExportInventoryJson","_IsInventoryDirty","_GetInventoryVersion","_MarkInventoryClean","_ExportConnectivityRequestJson","_ImportConnectivityResultJson","_FailConnectivityRequest"]',
+            '-sEXPORTED_FUNCTIONS=["_InitializeClay","_UpdateDrawFrame","_GetCommandLabelBuffer","_GetCommandLabelCapacity","_GetRenderCommandsBuffer","_GetInventoryJsonBuffer","_GetInventoryJsonCapacity","_ImportInventoryJson","_ImportSensorsJson","_ExportInventoryJson","_IsInventoryDirty","_GetInventoryVersion","_MarkInventoryClean","_ExportConnectivityRequestJson","_ImportConnectivityResultJson","_FailConnectivityRequest","_TakeSensorImportRequest","_ImportSensorImportResultJson","_FailSensorImport"]',
             '-sEXPORTED_RUNTIME_METHODS=["HEAPU8"]',
             '-sFILESYSTEM=0',
             '-sINITIAL_MEMORY=67108864',
@@ -346,6 +354,8 @@ if web_cc.found()
             '-I' + meson.current_source_dir() / 'src/common',
             '-I' + meson.current_source_dir() / 'src/domain/inventory',
             '-I' + meson.current_source_dir() / 'src/domain/connectivity',
+            '-I' + meson.current_source_dir() / 'src/domain/incidents',
+            '-I' + meson.current_source_dir() / 'src/domain/sensors',
             '-I' + meson.current_source_dir() / 'src/protocol',
             '-I' + meson.current_source_dir() / 'subprojects/yyjson/src',
             '-I' + clay_root,
@@ -362,6 +372,8 @@ if web_cc.found()
             '@INPUT5@',
             '@INPUT6@',
             '@INPUT7@',
+            '@INPUT8@',
+            '@INPUT9@',
             meson.current_source_dir() / 'subprojects/yyjson/src/yyjson.c',
         ],
         env: web_env,

@@ -84,6 +84,8 @@ static void ReadOptionalString(yyjson_val *object, const char *name, char *desti
     ProgTP_TextCopy(destination, destination_size, yyjson_is_str(value) ? yyjson_get_str(value) : "");
 }
 
+static bool ReadRequiredUint32(yyjson_val *object, const char *name, uint32_t *destination, char *error, size_t error_size);
+
 char *ProgTP_EquipmentInventoryToJson(const ProgTP_EquipmentInventory *inventory, size_t *json_length) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     if (!doc) {
@@ -213,6 +215,160 @@ bool ProgTP_EquipmentInventoryFromJson(
     free(items);
     yyjson_doc_free(doc);
     return ok;
+}
+
+static yyjson_mut_val *SensorStoreToJsonValue(yyjson_mut_doc *doc, const ProgTP_SensorStore *store) {
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_val *items = yyjson_mut_arr(doc);
+    yyjson_mut_obj_add_val(doc, root, "readings", items);
+    if (!store) {
+        return root;
+    }
+    for (size_t i = 0; i < store->length; ++i) {
+        const ProgTP_SensorReading *reading = &store->items[i];
+        yyjson_mut_val *item = yyjson_mut_obj(doc);
+        yyjson_mut_arr_add_val(items, item);
+        yyjson_mut_obj_add_str(doc, item, "code", reading->code);
+        yyjson_mut_obj_add_str(doc, item, "type", reading->type);
+        yyjson_mut_obj_add_real(doc, item, "value", reading->value);
+        yyjson_mut_obj_add_str(doc, item, "unit", reading->unit);
+        yyjson_mut_obj_add_str(doc, item, "state", reading->state);
+        yyjson_mut_obj_add_str(doc, item, "imported_at", reading->imported_at);
+    }
+    return root;
+}
+
+char *ProgTP_SensorStoreToJson(const ProgTP_SensorStore *store, size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_doc_set_root(doc, SensorStoreToJsonValue(doc, store));
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+static bool SensorStoreFromJsonValue(
+    yyjson_val *root,
+    ProgTP_SensorStore *store,
+    char *error,
+    size_t error_size) {
+    yyjson_val *items_value = yyjson_obj_get(root, "readings");
+    if (!yyjson_is_obj(root) || !yyjson_is_arr(items_value)) {
+        ProgTP_SetError(error, error_size, "sensor JSON must contain readings");
+        return false;
+    }
+    size_t item_count = yyjson_arr_size(items_value);
+    ProgTP_SensorReading *items = NULL;
+    if (item_count > 0) {
+        if (item_count > SIZE_MAX / sizeof(*items)) {
+            ProgTP_SetError(error, error_size, "sensor JSON is too large");
+            return false;
+        }
+        items = calloc(item_count, sizeof(*items));
+        if (!items) {
+            ProgTP_SetError(error, error_size, "not enough memory to parse sensor JSON");
+            return false;
+        }
+    }
+
+    size_t index = 0;
+    yyjson_val *item = NULL;
+    yyjson_arr_iter iter = yyjson_arr_iter_with(items_value);
+    while ((item = yyjson_arr_iter_next(&iter)) != NULL) {
+        yyjson_val *value = yyjson_obj_get(item, "value");
+        if (!yyjson_is_obj(item) || !yyjson_is_num(value)) {
+            free(items);
+            ProgTP_SetError(error, error_size, "sensor entry has invalid fields");
+            return false;
+        }
+        ProgTP_SensorReading *reading = &items[index++];
+        reading->value = yyjson_get_num(value);
+        if (!ReadRequiredString(item, "code", reading->code, sizeof(reading->code), error, error_size) ||
+            !ReadRequiredString(item, "type", reading->type, sizeof(reading->type), error, error_size) ||
+            !ReadRequiredString(item, "unit", reading->unit, sizeof(reading->unit), error, error_size) ||
+            !ReadRequiredString(item, "state", reading->state, sizeof(reading->state), error, error_size) ||
+            !ReadRequiredString(item, "imported_at", reading->imported_at, sizeof(reading->imported_at), error, error_size)) {
+            free(items);
+            return false;
+        }
+    }
+
+    bool ok = ProgTP_SensorStoreReplace(store, items, item_count, error, error_size);
+    free(items);
+    return ok;
+}
+
+bool ProgTP_SensorStoreFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_SensorStore *store,
+    char *error,
+    size_t error_size) {
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid sensor JSON");
+        return false;
+    }
+    bool ok = SensorStoreFromJsonValue(yyjson_doc_get_root(doc), store, error, error_size);
+    yyjson_doc_free(doc);
+    return ok;
+}
+
+char *ProgTP_SensorImportResponseToJson(
+    const ProgTP_SensorImportResult *result,
+    const ProgTP_SensorStore *store,
+    size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_val *result_value = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_val(doc, root, "result", result_value);
+    yyjson_mut_obj_add_uint(doc, result_value, "imported_count", result ? result->imported_count : 0u);
+    yyjson_mut_obj_add_uint(doc, result_value, "anomalous_count", result ? result->anomalous_count : 0u);
+    yyjson_mut_obj_add_uint(doc, result_value, "incidents_created", result ? result->incidents_created : 0u);
+    yyjson_mut_obj_add_str(doc, result_value, "summary", result ? result->summary : "");
+    yyjson_mut_obj_add_val(doc, root, "sensors", SensorStoreToJsonValue(doc, store));
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_SensorImportResponseFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_SensorImportResult *result,
+    ProgTP_SensorStore *store,
+    char *error,
+    size_t error_size) {
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid sensor import JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *result_value = yyjson_obj_get(root, "result");
+    yyjson_val *sensors_value = yyjson_obj_get(root, "sensors");
+    if (!yyjson_is_obj(root) || !yyjson_is_obj(result_value) || !yyjson_is_obj(sensors_value)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "sensor import response has invalid fields");
+        return false;
+    }
+    memset(result, 0, sizeof(*result));
+    if (!ReadRequiredUint32(result_value, "imported_count", &result->imported_count, error, error_size) ||
+        !ReadRequiredUint32(result_value, "anomalous_count", &result->anomalous_count, error, error_size) ||
+        !ReadRequiredUint32(result_value, "incidents_created", &result->incidents_created, error, error_size) ||
+        !ReadRequiredString(result_value, "summary", result->summary, sizeof(result->summary), error, error_size) ||
+        !SensorStoreFromJsonValue(sensors_value, store, error, error_size)) {
+        yyjson_doc_free(doc);
+        return false;
+    }
+    yyjson_doc_free(doc);
+    return true;
 }
 
 char *ProgTP_ConnectivityRequestToJson(const ProgTP_ConnectivityRequest *request, size_t *json_length) {

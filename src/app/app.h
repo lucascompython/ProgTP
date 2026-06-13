@@ -3,6 +3,7 @@
 
 #include "connectivity.h"
 #include "equipment_inventory.h"
+#include "sensor_store.h"
 
 #include <clay.h>
 #include <stdbool.h>
@@ -65,6 +66,14 @@ typedef enum {
     PROGTP_APP_ACTION_CONNECTIVITY_NEXT_TARGET,
     PROGTP_APP_ACTION_CONNECTIVITY_PAGE_PREVIOUS,
     PROGTP_APP_ACTION_CONNECTIVITY_PAGE_NEXT,
+    PROGTP_APP_ACTION_SENSOR_IMPORT,
+    PROGTP_APP_ACTION_SENSOR_PREVIOUS,
+    PROGTP_APP_ACTION_SENSOR_NEXT,
+    PROGTP_APP_ACTION_SENSOR_PAGE_PREVIOUS,
+    PROGTP_APP_ACTION_SENSOR_PAGE_NEXT,
+    PROGTP_APP_ACTION_SENSOR_FILTER_ALL,
+    PROGTP_APP_ACTION_SENSOR_FILTER_ANOMALOUS,
+    PROGTP_APP_ACTION_SENSOR_SEARCH_FIELD,
 } ProgTP_AppAction;
 
 typedef enum {
@@ -80,6 +89,7 @@ typedef enum {
     PROGTP_APP_INPUT_SEARCH_IP,
     PROGTP_APP_INPUT_SEARCH_MAC,
     PROGTP_APP_INPUT_CONNECTIVITY_COMMAND,
+    PROGTP_APP_INPUT_SENSOR_CODE,
 } ProgTP_AppInputMode;
 
 typedef enum {
@@ -102,7 +112,9 @@ typedef enum {
 
 typedef struct {
     ProgTP_EquipmentInventory inventory;
+    ProgTP_SensorStore sensors;
     uint32_t selected_code;
+    size_t selected_sensor_index;
     int active_module;
     ProgTP_AppView view;
     ProgTP_AppInputMode input_mode;
@@ -118,6 +130,10 @@ typedef struct {
     bool connectivity_request_pending;
     bool connectivity_request_in_flight;
     bool connectivity_has_result;
+    bool sensor_import_request_pending;
+    bool sensor_import_request_in_flight;
+    bool sensor_filter_anomalous;
+    bool sensor_has_import_result;
     uint64_t inventory_version;
     char storage_path[128];
     char status[320];
@@ -163,6 +179,18 @@ typedef struct {
     size_t connectivity_row_offset;
     char connectivity_output_lines[8][192];
     size_t connectivity_output_line_count;
+    ProgTP_SensorImportResult sensor_import_result;
+    char sensor_metric_total_text[32];
+    char sensor_metric_anomaly_text[32];
+    char sensor_metric_selected_text[64];
+    char sensor_search_text[64];
+    char sensor_search_display[80];
+    char sensor_row_page_text[96];
+    char sensor_row_texts[12][256];
+    size_t sensor_row_indices[12];
+    size_t sensor_row_count;
+    size_t sensor_row_offset;
+    char sensor_selected_text[320];
 } ProgTP_AppState;
 
 void ProgTP_HandleClayError(Clay_ErrorData errorData);
@@ -175,12 +203,19 @@ bool ProgTP_AppInventoryDirty(const ProgTP_AppState *state);
 uint64_t ProgTP_AppInventoryVersion(const ProgTP_AppState *state);
 void ProgTP_AppMarkInventoryClean(ProgTP_AppState *state);
 bool ProgTP_AppModalActive(const ProgTP_AppState *state);
+void ProgTP_AppUseLoadedSensors(ProgTP_AppState *state, const ProgTP_SensorStore *store, const char *status);
 bool ProgTP_AppTakeConnectivityRequest(ProgTP_AppState *state, ProgTP_ConnectivityRequest *request);
+bool ProgTP_AppTakeSensorImportRequest(ProgTP_AppState *state);
 void ProgTP_AppCompleteConnectivityRequest(
     ProgTP_AppState *state,
     const ProgTP_ConnectivityResult *result,
     bool inventory_changed_locally);
+void ProgTP_AppCompleteSensorImport(
+    ProgTP_AppState *state,
+    const ProgTP_SensorImportResult *result,
+    const ProgTP_SensorStore *store);
 void ProgTP_AppFailConnectivityRequest(ProgTP_AppState *state, const char *error);
+void ProgTP_AppFailSensorImport(ProgTP_AppState *state, const char *error);
 void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action);
 void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint);
 Clay_RenderCommandArray ProgTP_AppBuildLayout(ProgTP_AppState *state, const char *target_name, float delta_time);

@@ -18,6 +18,38 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
+#include <string.h>
+#include <threads.h>
+
+typedef struct {
+    thrd_t thread;
+    atomic_bool done;
+    bool active;
+    bool has_thread;
+    bool remote;
+    bool ok;
+    bool inventory_available;
+    bool inventory_changed_locally;
+    char remote_url[512];
+    char error[256];
+    ProgTP_EquipmentInventory inventory;
+    ProgTP_ConnectivityRequest request;
+    ProgTP_ConnectivityResult result;
+} ConnectivityJob;
+
+typedef struct {
+    thrd_t thread;
+    atomic_bool done;
+    bool active;
+    bool has_thread;
+    bool remote;
+    bool ok;
+    char remote_url[512];
+    char error[256];
+    ProgTP_SensorStore store;
+    ProgTP_SensorImportResult result;
+} SensorJob;
 
 static ProgTP_AppAction ActionFromTermboxEvent(const struct tb_event *event) {
     if (event->key == TB_KEY_BACKSPACE || event->key == TB_KEY_BACKSPACE2) {
@@ -44,6 +76,7 @@ static ProgTP_AppAction ActionFromTermboxEvent(const struct tb_event *event) {
         case '7': return PROGTP_APP_ACTION_MODULE_7;
         case '8': return PROGTP_APP_ACTION_MODULE_8;
         case 'c': case 'C': return PROGTP_APP_ACTION_SEARCH_CODE;
+        case 'g': case 'G': return PROGTP_APP_ACTION_SENSOR_IMPORT;
         case 'i': case 'I': return PROGTP_APP_ACTION_SEARCH_IP;
         case 'm': case 'M': return PROGTP_APP_ACTION_SEARCH_MAC;
         case 'w': case 'W': return PROGTP_APP_ACTION_SAVE;
@@ -51,6 +84,148 @@ static ProgTP_AppAction ActionFromTermboxEvent(const struct tb_event *event) {
         default: break;
     }
     return PROGTP_APP_ACTION_NONE;
+}
+
+static int ConnectivityThreadMain(void *user_data) {
+    ConnectivityJob *job = user_data;
+    job->ok = job->remote
+        ? ProgTP_RunRemoteConnectivity(
+            job->remote_url,
+            &job->request,
+            &job->result,
+            job->error,
+            sizeof(job->error))
+        : ProgTP_RunLocalConnectivity(
+            &job->inventory,
+            &job->request,
+            &job->result,
+            job->error,
+            sizeof(job->error));
+    if (job->ok && job->remote && job->result.inventory_changed) {
+        job->ok = ProgTP_LoadRemoteInventory(job->remote_url, &job->inventory, job->error, sizeof(job->error));
+        job->inventory_available = job->ok;
+    } else if (job->ok && !job->remote && job->result.inventory_changed) {
+        job->inventory_available = true;
+        job->inventory_changed_locally = true;
+    }
+    atomic_store_explicit(&job->done, true, memory_order_release);
+    return 0;
+}
+
+static int SensorThreadMain(void *user_data) {
+    SensorJob *job = user_data;
+    job->ok = job->remote
+        ? ProgTP_RunRemoteSensorImport(
+            job->remote_url,
+            &job->store,
+            &job->result,
+            job->error,
+            sizeof(job->error))
+        : ProgTP_RunLocalSensorImport(&job->store, &job->result, job->error, sizeof(job->error));
+    atomic_store_explicit(&job->done, true, memory_order_release);
+    return 0;
+}
+
+static bool CopyInventory(ProgTP_EquipmentInventory *destination, const ProgTP_EquipmentInventory *source, char *error, size_t error_size) {
+    ProgTP_EquipmentInventoryInit(destination);
+    return ProgTP_EquipmentInventoryReplace(
+        destination,
+        source->array.items,
+        source->array.length,
+        source->next_code,
+        error,
+        error_size);
+}
+
+static void TransferInventory(ProgTP_EquipmentInventory *destination, ProgTP_EquipmentInventory *source) {
+    ProgTP_EquipmentInventoryDestroy(destination);
+    *destination = *source;
+    memset(source, 0, sizeof(*source));
+}
+
+static void StartConnectivityJob(
+    ConnectivityJob *job,
+    const char *remote_url,
+    const ProgTP_AppState *app_state,
+    const ProgTP_ConnectivityRequest *request) {
+    memset(job, 0, sizeof(*job));
+    atomic_init(&job->done, false);
+    job->active = true;
+    job->remote = remote_url != NULL;
+    if (remote_url) {
+        snprintf(job->remote_url, sizeof(job->remote_url), "%s", remote_url);
+    }
+    job->request = *request;
+    if (!CopyInventory(&job->inventory, &app_state->inventory, job->error, sizeof(job->error))) {
+        job->ok = false;
+        atomic_store(&job->done, true);
+        return;
+    }
+    if (thrd_create(&job->thread, ConnectivityThreadMain, job) != thrd_success) {
+        snprintf(job->error, sizeof(job->error), "could not start connectivity worker");
+        job->ok = false;
+        atomic_store(&job->done, true);
+        return;
+    }
+    job->has_thread = true;
+}
+
+static void FinishConnectivityJob(ConnectivityJob *job, ProgTP_AppState *app_state) {
+    if (job->has_thread) {
+        int ignored = 0;
+        thrd_join(job->thread, &ignored);
+        job->has_thread = false;
+    }
+    if (!job->ok) {
+        ProgTP_AppFailConnectivityRequest(app_state, job->error);
+    } else {
+        if (job->inventory_available) {
+            TransferInventory(&app_state->inventory, &job->inventory);
+            if (job->remote) {
+                ProgTP_AppUseLoadedInventory(app_state, "Reloaded inventory after server command");
+            }
+        }
+        ProgTP_AppCompleteConnectivityRequest(app_state, &job->result, job->inventory_changed_locally);
+    }
+    ProgTP_EquipmentInventoryDestroy(&job->inventory);
+    memset(job, 0, sizeof(*job));
+}
+
+static void StartSensorJob(SensorJob *job, const char *remote_url, const ProgTP_AppState *app_state) {
+    memset(job, 0, sizeof(*job));
+    atomic_init(&job->done, false);
+    job->active = true;
+    job->remote = remote_url != NULL;
+    if (remote_url) {
+        snprintf(job->remote_url, sizeof(job->remote_url), "%s", remote_url);
+    }
+    if (!ProgTP_SensorStoreCopy(&job->store, &app_state->sensors, job->error, sizeof(job->error))) {
+        job->ok = false;
+        atomic_store(&job->done, true);
+        return;
+    }
+    if (thrd_create(&job->thread, SensorThreadMain, job) != thrd_success) {
+        snprintf(job->error, sizeof(job->error), "could not start sensor worker");
+        job->ok = false;
+        atomic_store(&job->done, true);
+        return;
+    }
+    job->has_thread = true;
+}
+
+static void FinishSensorJob(SensorJob *job, ProgTP_AppState *app_state) {
+    if (job->has_thread) {
+        int ignored = 0;
+        thrd_join(job->thread, &ignored);
+        job->has_thread = false;
+    }
+    if (job->ok) {
+        ProgTP_AppCompleteSensorImport(app_state, &job->result, &job->store);
+    } else {
+        ProgTP_AppFailSensorImport(app_state, job->error);
+    }
+    ProgTP_SensorStoreDestroy(&job->store);
+    memset(job, 0, sizeof(*job));
 }
 
 int main(int argc, char **argv) {
@@ -75,6 +250,17 @@ int main(int argc, char **argv) {
             snprintf(status, sizeof(status), "HTTP inventory load failed: %s", inventory_error);
             ProgTP_AppSetStatus(&app_state, status);
         }
+        ProgTP_SensorStore remote_sensors;
+        ProgTP_SensorStoreInit(&remote_sensors);
+        char sensor_error[256] = {0};
+        if (ProgTP_LoadRemoteSensors(remote_url, &remote_sensors, sensor_error, sizeof(sensor_error))) {
+            ProgTP_AppUseLoadedSensors(&app_state, &remote_sensors, "Loaded sensors from HTTP server");
+        } else {
+            char status[320];
+            snprintf(status, sizeof(status), "HTTP sensor load failed: %s", sensor_error);
+            ProgTP_AppSetStatus(&app_state, status);
+        }
+        ProgTP_SensorStoreDestroy(&remote_sensors);
     }
 
     Clay_Termbox_Initialize(
@@ -100,9 +286,11 @@ int main(int argc, char **argv) {
     int mouse_x = 0;
     int mouse_y = 0;
     bool mouse_down = false;
+    ConnectivityJob connectivity_job = {0};
+    SensorJob sensor_job = {0};
     while (running) {
         struct tb_event event;
-        int event_result = tb_poll_event(&event);
+        int event_result = tb_peek_event(&event, 16);
         if (event_result == TB_OK) {
             bool text_active = app_state.input_mode != PROGTP_APP_INPUT_NONE || ProgTP_AppModalActive(&app_state);
             if (event.type == TB_EVENT_KEY && (event.key == TB_KEY_CTRL_C || (!text_active && (event.ch == 'q' || event.ch == 'Q')))) {
@@ -146,43 +334,21 @@ int main(int argc, char **argv) {
         Clay_SetLayoutDimensions((Clay_Dimensions){ Clay_Termbox_Width(), Clay_Termbox_Height() });
         Clay_SetPointerState((Clay_Vector2){ (float)mouse_x, (float)mouse_y }, mouse_down);
 
-        ProgTP_ConnectivityRequest connectivity_request;
-        if (ProgTP_AppTakeConnectivityRequest(&app_state, &connectivity_request)) {
-            ProgTP_ConnectivityResult connectivity_result;
-            char connectivity_error[256] = {0};
-            bool connectivity_ok = remote_url
-                ? ProgTP_RunRemoteConnectivity(
-                    remote_url,
-                    &connectivity_request,
-                    &connectivity_result,
-                    connectivity_error,
-                    sizeof(connectivity_error))
-                : ProgTP_RunLocalConnectivity(
-                    &app_state.inventory,
-                    &connectivity_request,
-                    &connectivity_result,
-                    connectivity_error,
-                    sizeof(connectivity_error));
-            if (!connectivity_ok) {
-                ProgTP_AppFailConnectivityRequest(&app_state, connectivity_error);
-            } else if (remote_url && connectivity_result.inventory_changed) {
-                char inventory_error[256] = {0};
-                if (ProgTP_LoadRemoteInventory(
-                        remote_url,
-                        &app_state.inventory,
-                        inventory_error,
-                        sizeof(inventory_error))) {
-                    ProgTP_AppUseLoadedInventory(&app_state, "Reloaded inventory after server command");
-                    ProgTP_AppCompleteConnectivityRequest(&app_state, &connectivity_result, false);
-                } else {
-                    ProgTP_AppFailConnectivityRequest(&app_state, inventory_error);
-                }
-            } else {
-                ProgTP_AppCompleteConnectivityRequest(
-                    &app_state,
-                    &connectivity_result,
-                    remote_url == NULL);
+        if (connectivity_job.active && atomic_load_explicit(&connectivity_job.done, memory_order_acquire)) {
+            FinishConnectivityJob(&connectivity_job, &app_state);
+        }
+        if (!connectivity_job.active) {
+            ProgTP_ConnectivityRequest connectivity_request;
+            if (ProgTP_AppTakeConnectivityRequest(&app_state, &connectivity_request)) {
+                StartConnectivityJob(&connectivity_job, remote_url, &app_state, &connectivity_request);
             }
+        }
+
+        if (sensor_job.active && atomic_load_explicit(&sensor_job.done, memory_order_acquire)) {
+            FinishSensorJob(&sensor_job, &app_state);
+        }
+        if (!sensor_job.active && ProgTP_AppTakeSensorImportRequest(&app_state)) {
+            StartSensorJob(&sensor_job, remote_url, &app_state);
         }
 
         commands = ProgTP_AppBuildLayout(&app_state, command_label, 0.016f);
@@ -206,6 +372,13 @@ int main(int argc, char **argv) {
         tb_clear();
         Clay_Termbox_Render(commands);
         tb_present();
+    }
+
+    if (connectivity_job.active) {
+        FinishConnectivityJob(&connectivity_job, &app_state);
+    }
+    if (sensor_job.active) {
+        FinishSensorJob(&sensor_job, &app_state);
     }
 
     Clay_Termbox_Close();

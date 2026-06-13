@@ -38,5 +38,15 @@ bool ProgTP_IncidentStoreAppendPingFailure(
     const char *timestamp,
     char *error,
     size_t error_size);
+bool ProgTP_IncidentStoreAppendGeneric(
+    const char *path,
+    uint32_t equipment_code,
+    const char *source,
+    const char *type,
+    const char *description,
+    const char *priority,
+    const char *timestamp,
+    char *error,
+    size_t error_size);
 
 #endif

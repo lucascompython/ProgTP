@@ -30,6 +30,7 @@ static const Clay_Color COLOR_OVERLAY = {9, 12, 16, 178};
 
 #define PROGTP_UI_MODULE_BASE 100u
 #define PROGTP_UI_SELECT_BASE 1000u
+#define PROGTP_UI_SENSOR_SELECT_BASE 2000u
 #define PROGTP_UI_FORM_FIELD_BASE 3000u
 #define PROGTP_UI_FORM_STATE_BASE 4000u
 #define PROGTP_VISIBLE_ROWS 12u
@@ -88,6 +89,7 @@ static const char *InputModeName(ProgTP_AppInputMode mode) {
         case PROGTP_APP_INPUT_SEARCH_IP: return "Search IP";
         case PROGTP_APP_INPUT_SEARCH_MAC: return "Search MAC";
         case PROGTP_APP_INPUT_CONNECTIVITY_COMMAND: return "Custom command";
+        case PROGTP_APP_INPUT_SENSOR_CODE: return "Sensor code";
         case PROGTP_APP_INPUT_NONE: break;
     }
     return "";
@@ -99,6 +101,7 @@ static const char *SearchPlaceholder(ProgTP_AppInputMode mode) {
         case PROGTP_APP_INPUT_SEARCH_IP: return "Enter IP address";
         case PROGTP_APP_INPUT_SEARCH_MAC: return "Enter MAC address";
         case PROGTP_APP_INPUT_CONNECTIVITY_COMMAND: return "Enter a command to run";
+        case PROGTP_APP_INPUT_SENSOR_CODE: return "Enter sensor code";
         case PROGTP_APP_INPUT_NONE: break;
     }
     return "Select Code, IP, or MAC";
@@ -163,6 +166,35 @@ static void LoadInventory(ProgTP_AppState *state) {
     EnsureSelection(state);
 }
 
+static void EnsureSensorSelection(ProgTP_AppState *state) {
+    if (state->sensors.length == 0) {
+        state->selected_sensor_index = 0;
+    } else if (state->selected_sensor_index >= state->sensors.length) {
+        state->selected_sensor_index = state->sensors.length - 1u;
+    }
+}
+
+static void LoadSensors(ProgTP_AppState *state) {
+    if (!state->persistence_enabled) {
+        return;
+    }
+    char error[256] = {0};
+    if (!ProgTP_SensorStoreLoadBinary(&state->sensors, "leituras_sensores.dat", error, sizeof(error))) {
+        snprintf(state->status, sizeof(state->status), "Sensor load failed: %s", error);
+    }
+    EnsureSensorSelection(state);
+}
+
+static void PersistSensorsIfEnabled(ProgTP_AppState *state) {
+    if (!state->persistence_enabled) {
+        return;
+    }
+    char error[256] = {0};
+    if (!ProgTP_SensorStoreSaveBinary(&state->sensors, "leituras_sensores.dat", error, sizeof(error))) {
+        snprintf(state->status, sizeof(state->status), "Sensor save failed: %s", error);
+    }
+}
+
 void ProgTP_AppInit(ProgTP_AppState *state, bool persistence_enabled, const char *storage_path) {
     memset(state, 0, sizeof(*state));
     state->active_module = 1;
@@ -174,11 +206,15 @@ void ProgTP_AppInit(ProgTP_AppState *state, bool persistence_enabled, const char
         "No connectivity test has been run");
     snprintf(state->storage_path, sizeof(state->storage_path), "%s", storage_path ? storage_path : "equipamentos.dat");
     ProgTP_EquipmentInventoryInit(&state->inventory);
+    ProgTP_SensorStoreInit(&state->sensors);
     LoadInventory(state);
+    LoadSensors(state);
 }
 
 void ProgTP_AppDestroy(ProgTP_AppState *state) {
     PersistIfEnabled(state);
+    PersistSensorsIfEnabled(state);
+    ProgTP_SensorStoreDestroy(&state->sensors);
     ProgTP_EquipmentInventoryDestroy(&state->inventory);
 }
 
@@ -209,6 +245,19 @@ bool ProgTP_AppModalActive(const ProgTP_AppState *state) {
     return state->modal != PROGTP_APP_MODAL_NONE;
 }
 
+void ProgTP_AppUseLoadedSensors(ProgTP_AppState *state, const ProgTP_SensorStore *store, const char *status) {
+    char error[256] = {0};
+    if (!ProgTP_SensorStoreCopy(&state->sensors, store, error, sizeof(error))) {
+        snprintf(state->status, sizeof(state->status), "Sensor load failed: %s", error);
+        return;
+    }
+    state->sensor_import_request_pending = false;
+    state->sensor_import_request_in_flight = false;
+    state->sensor_row_offset = 0;
+    EnsureSensorSelection(state);
+    SetStatus(state, status ? status : "Loaded sensors");
+}
+
 bool ProgTP_AppTakeConnectivityRequest(ProgTP_AppState *state, ProgTP_ConnectivityRequest *request) {
     if (!state->connectivity_request_pending || state->connectivity_request_in_flight) {
         return false;
@@ -217,6 +266,16 @@ bool ProgTP_AppTakeConnectivityRequest(ProgTP_AppState *state, ProgTP_Connectivi
     state->connectivity_request_pending = false;
     state->connectivity_request_in_flight = true;
     SetStatus(state, "Running connectivity command");
+    return true;
+}
+
+bool ProgTP_AppTakeSensorImportRequest(ProgTP_AppState *state) {
+    if (!state->sensor_import_request_pending || state->sensor_import_request_in_flight) {
+        return false;
+    }
+    state->sensor_import_request_pending = false;
+    state->sensor_import_request_in_flight = true;
+    SetStatus(state, "Importing sensor readings");
     return true;
 }
 
@@ -244,6 +303,33 @@ void ProgTP_AppFailConnectivityRequest(ProgTP_AppState *state, const char *error
         error ? error : "unknown error");
     state->connectivity_has_result = true;
     SetStatus(state, state->connectivity_result.summary);
+}
+
+void ProgTP_AppCompleteSensorImport(
+    ProgTP_AppState *state,
+    const ProgTP_SensorImportResult *result,
+    const ProgTP_SensorStore *store) {
+    char copy_error[256] = {0};
+    if (!ProgTP_SensorStoreCopy(&state->sensors, store, copy_error, sizeof(copy_error))) {
+        ProgTP_AppFailSensorImport(state, copy_error);
+        return;
+    }
+    state->sensor_import_result = *result;
+    state->sensor_has_import_result = true;
+    state->sensor_import_request_in_flight = false;
+    state->selected_sensor_index = state->sensors.length > 0 ? state->sensors.length - 1u : 0;
+    state->sensor_row_offset = 0;
+    SetStatus(state, result->summary);
+}
+
+void ProgTP_AppFailSensorImport(ProgTP_AppState *state, const char *error) {
+    state->sensor_import_request_pending = false;
+    state->sensor_import_request_in_flight = false;
+    snprintf(
+        state->status,
+        sizeof(state->status),
+        "Sensor import failed: %s",
+        error ? error : "unknown error");
 }
 
 static bool IsFirstTypeOccurrence(const ProgTP_AppState *state, size_t item_index) {
@@ -625,9 +711,116 @@ static void QueueConnectivityRequest(ProgTP_AppState *state, ProgTP_Connectivity
     SetStatus(state, operation == PROGTP_CONNECTIVITY_CUSTOM ? "Custom command queued" : "Ping test queued");
 }
 
+static bool SensorVisible(const ProgTP_AppState *state, const ProgTP_SensorReading *reading) {
+    return !state->sensor_filter_anomalous || ProgTP_SensorReadingIsAnomalous(reading);
+}
+
+static size_t CountVisibleSensors(const ProgTP_AppState *state) {
+    size_t count = 0;
+    for (size_t i = 0; i < state->sensors.length; ++i) {
+        if (SensorVisible(state, &state->sensors.items[i])) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static bool SelectVisibleSensorAt(ProgTP_AppState *state, size_t visible_index) {
+    size_t current = 0;
+    for (size_t i = 0; i < state->sensors.length; ++i) {
+        if (!SensorVisible(state, &state->sensors.items[i])) {
+            continue;
+        }
+        if (current == visible_index) {
+            state->selected_sensor_index = i;
+            return true;
+        }
+        ++current;
+    }
+    return false;
+}
+
+static void EnsureSensorSelectionInFilter(ProgTP_AppState *state) {
+    EnsureSensorSelection(state);
+    if (state->sensors.length == 0 || SensorVisible(state, &state->sensors.items[state->selected_sensor_index])) {
+        return;
+    }
+    SelectVisibleSensorAt(state, 0);
+}
+
+static void MoveSensorSelection(ProgTP_AppState *state, int direction) {
+    size_t visible_count = CountVisibleSensors(state);
+    if (visible_count == 0) {
+        EnsureSensorSelection(state);
+        return;
+    }
+    size_t current = 0;
+    bool found = false;
+    for (size_t i = 0; i < state->sensors.length; ++i) {
+        if (!SensorVisible(state, &state->sensors.items[i])) {
+            continue;
+        }
+        if (i == state->selected_sensor_index) {
+            found = true;
+            break;
+        }
+        ++current;
+    }
+    if (!found) {
+        current = 0;
+    }
+    size_t next = current;
+    if (direction > 0) {
+        next = (current + 1u) % visible_count;
+    } else {
+        next = current == 0 ? visible_count - 1u : current - 1u;
+    }
+    SelectVisibleSensorAt(state, next);
+}
+
+static void PageSensors(ProgTP_AppState *state, int direction) {
+    size_t visible_count = CountVisibleSensors(state);
+    if (visible_count <= PROGTP_VISIBLE_ROWS) {
+        state->sensor_row_offset = 0;
+        return;
+    }
+    if (direction > 0) {
+        size_t next = state->sensor_row_offset + PROGTP_VISIBLE_ROWS;
+        state->sensor_row_offset = next < visible_count ? next : 0;
+    } else if (state->sensor_row_offset == 0) {
+        state->sensor_row_offset = ((visible_count - 1u) / PROGTP_VISIBLE_ROWS) * PROGTP_VISIBLE_ROWS;
+    } else {
+        state->sensor_row_offset = state->sensor_row_offset > PROGTP_VISIBLE_ROWS
+            ? state->sensor_row_offset - PROGTP_VISIBLE_ROWS
+            : 0;
+    }
+    SelectVisibleSensorAt(state, state->sensor_row_offset);
+}
+
+static void QueueSensorImportRequest(ProgTP_AppState *state) {
+    if (state->sensor_import_request_pending || state->sensor_import_request_in_flight) {
+        SetStatus(state, "A sensor import is already running");
+        return;
+    }
+    state->sensor_import_request_pending = true;
+    SetStatus(state, "Sensor import queued");
+}
+
 static void SubmitInput(ProgTP_AppState *state) {
     if (state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND) {
         QueueConnectivityRequest(state, PROGTP_CONNECTIVITY_CUSTOM);
+        return;
+    }
+    if (state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE) {
+        const ProgTP_SensorReading *reading = ProgTP_SensorStoreFindLatestByCode(&state->sensors, state->sensor_search_text);
+        if (reading) {
+            state->selected_sensor_index = (size_t)(reading - state->sensors.items);
+            snprintf(state->status, sizeof(state->status), "Found sensor %s", reading->code);
+        } else {
+            snprintf(state->status, sizeof(state->status), "No sensor match for %s", state->sensor_search_text);
+        }
+        state->input_mode = PROGTP_APP_INPUT_NONE;
+        state->sensor_search_text[0] = '\0';
         return;
     }
     ProgTP_Equipment *equipment = NULL;
@@ -714,6 +907,21 @@ static void PageRows(ProgTP_AppState *state, int direction) {
     SelectFilteredRowAt(state, state->row_offset);
 }
 
+static bool IsInventoryMutationAction(ProgTP_AppAction action) {
+    switch (action) {
+        case PROGTP_APP_ACTION_ADD_SAMPLE:
+        case PROGTP_APP_ACTION_UPDATE_SELECTED:
+        case PROGTP_APP_ACTION_REMOVE_SELECTED:
+        case PROGTP_APP_ACTION_CYCLE_STATE:
+        case PROGTP_APP_ACTION_TOGGLE_PENDING:
+        case PROGTP_APP_ACTION_SAVE:
+        case PROGTP_APP_ACTION_LOAD:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
     if (HandleModalAction(state, action)) {
         EnsureSelection(state);
@@ -724,7 +932,7 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         if (action == PROGTP_APP_ACTION_INPUT_BACKSPACE) {
             char *buffer = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
                 ? state->connectivity_custom_command
-                : state->input_text;
+                : state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE ? state->sensor_search_text : state->input_text;
             size_t length = strlen(buffer);
             if (length > 0) {
                 buffer[length - 1u] = '\0';
@@ -745,9 +953,26 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         }
     }
 
+    if (state->connectivity_request_in_flight && IsInventoryMutationAction(action)) {
+        SetStatus(state, "Wait for the connectivity command to finish");
+        return;
+    }
+
     switch (action) {
-        case PROGTP_APP_ACTION_NEXT: MoveSelection(state, 1); break;
-        case PROGTP_APP_ACTION_PREVIOUS: MoveSelection(state, -1); break;
+        case PROGTP_APP_ACTION_NEXT:
+            if (state->active_module == 3) {
+                MoveSensorSelection(state, 1);
+            } else {
+                MoveSelection(state, 1);
+            }
+            break;
+        case PROGTP_APP_ACTION_PREVIOUS:
+            if (state->active_module == 3) {
+                MoveSensorSelection(state, -1);
+            } else {
+                MoveSelection(state, -1);
+            }
+            break;
         case PROGTP_APP_ACTION_ADD_SAMPLE: OpenAddModal(state); break;
         case PROGTP_APP_ACTION_UPDATE_SELECTED: OpenUpdateModal(state); break;
         case PROGTP_APP_ACTION_REMOVE_SELECTED: OpenRemoveModal(state); break;
@@ -763,7 +988,15 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_FILTER_ROUTERS: SetTypeFilter(state, "Router"); break;
         case PROGTP_APP_ACTION_FILTER_FAILED: SetStateFilter(state, true, PROGTP_EQUIPMENT_FAILED); break;
         case PROGTP_APP_ACTION_FILTER_PENDING: break;
-        case PROGTP_APP_ACTION_SEARCH_CODE: StartInput(state, PROGTP_APP_INPUT_SEARCH_CODE); break;
+        case PROGTP_APP_ACTION_SEARCH_CODE:
+            if (state->active_module == 3) {
+                state->input_mode = PROGTP_APP_INPUT_SENSOR_CODE;
+                state->sensor_search_text[0] = '\0';
+                SetStatus(state, "Sensor code: type value and press Enter");
+            } else {
+                StartInput(state, PROGTP_APP_INPUT_SEARCH_CODE);
+            }
+            break;
         case PROGTP_APP_ACTION_SEARCH_IP: StartInput(state, PROGTP_APP_INPUT_SEARCH_IP); break;
         case PROGTP_APP_ACTION_SEARCH_MAC: StartInput(state, PROGTP_APP_INPUT_SEARCH_MAC); break;
         case PROGTP_APP_ACTION_SEARCH_FIELD: FocusSearchInput(state); break;
@@ -841,6 +1074,26 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 state->connectivity_row_offset = next < state->inventory.array.length ? next : 0;
             }
             break;
+        case PROGTP_APP_ACTION_SENSOR_IMPORT: QueueSensorImportRequest(state); break;
+        case PROGTP_APP_ACTION_SENSOR_PREVIOUS: MoveSensorSelection(state, -1); break;
+        case PROGTP_APP_ACTION_SENSOR_NEXT: MoveSensorSelection(state, 1); break;
+        case PROGTP_APP_ACTION_SENSOR_PAGE_PREVIOUS: PageSensors(state, -1); break;
+        case PROGTP_APP_ACTION_SENSOR_PAGE_NEXT: PageSensors(state, 1); break;
+        case PROGTP_APP_ACTION_SENSOR_FILTER_ALL:
+            state->sensor_filter_anomalous = false;
+            state->sensor_row_offset = 0;
+            EnsureSensorSelectionInFilter(state);
+            break;
+        case PROGTP_APP_ACTION_SENSOR_FILTER_ANOMALOUS:
+            state->sensor_filter_anomalous = true;
+            state->sensor_row_offset = 0;
+            EnsureSensorSelectionInFilter(state);
+            break;
+        case PROGTP_APP_ACTION_SENSOR_SEARCH_FIELD:
+            state->input_mode = PROGTP_APP_INPUT_SENSOR_CODE;
+            state->sensor_search_text[0] = '\0';
+            SetStatus(state, "Sensor code: type value and press Enter");
+            break;
         case PROGTP_APP_ACTION_NONE:
         case PROGTP_APP_ACTION_INPUT_BACKSPACE:
         case PROGTP_APP_ACTION_INPUT_SUBMIT:
@@ -872,10 +1125,10 @@ void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint) {
     }
     char *buffer = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
         ? state->connectivity_custom_command
-        : state->input_text;
+        : state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE ? state->sensor_search_text : state->input_text;
     size_t buffer_size = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
         ? sizeof(state->connectivity_custom_command)
-        : sizeof(state->input_text);
+        : state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE ? sizeof(state->sensor_search_text) : sizeof(state->input_text);
     size_t length = strlen(buffer);
     if (length + 1u >= buffer_size) {
         return;
@@ -1070,6 +1323,89 @@ static void PrepareConnectivityText(ProgTP_AppState *state) {
     PrepareConnectivityOutputLines(state);
 }
 
+static void PrepareSensorText(ProgTP_AppState *state) {
+    uint32_t anomaly_count = 0;
+    for (size_t i = 0; i < state->sensors.length; ++i) {
+        if (ProgTP_SensorReadingIsAnomalous(&state->sensors.items[i])) {
+            ++anomaly_count;
+        }
+    }
+    EnsureSensorSelectionInFilter(state);
+    snprintf(state->sensor_metric_total_text, sizeof(state->sensor_metric_total_text), "%zu readings", state->sensors.length);
+    snprintf(state->sensor_metric_anomaly_text, sizeof(state->sensor_metric_anomaly_text), "%u anomalies", anomaly_count);
+    if (state->sensors.length > 0) {
+        const ProgTP_SensorReading *selected = &state->sensors.items[state->selected_sensor_index];
+        snprintf(state->sensor_metric_selected_text, sizeof(state->sensor_metric_selected_text), "%s", selected->code);
+        ProgTP_SensorReadingFormatLine(selected, state->sensor_selected_text, sizeof(state->sensor_selected_text));
+    } else {
+        snprintf(state->sensor_metric_selected_text, sizeof(state->sensor_metric_selected_text), "%s", "None");
+        snprintf(state->sensor_selected_text, sizeof(state->sensor_selected_text), "%s", "No sensor readings imported");
+    }
+    snprintf(
+        state->sensor_search_display,
+        sizeof(state->sensor_search_display),
+        "%s%s",
+        state->sensor_search_text[0] != '\0' ? state->sensor_search_text : "Sensor code",
+        state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE ? "_" : "");
+
+    state->sensor_row_count = 0;
+    size_t visible_count = CountVisibleSensors(state);
+    if (visible_count == 0) {
+        state->sensor_row_offset = 0;
+        snprintf(state->sensor_row_page_text, sizeof(state->sensor_row_page_text), "%s", "No sensor readings in this view");
+        return;
+    }
+    if (state->sensor_row_offset >= visible_count) {
+        state->sensor_row_offset = ((visible_count - 1u) / PROGTP_VISIBLE_ROWS) * PROGTP_VISIBLE_ROWS;
+    }
+    size_t selected_visible_index = (size_t)-1;
+    size_t visible_index = 0;
+    for (size_t i = 0; i < state->sensors.length; ++i) {
+        if (!SensorVisible(state, &state->sensors.items[i])) {
+            continue;
+        }
+        if (i == state->selected_sensor_index) {
+            selected_visible_index = visible_index;
+            break;
+        }
+        ++visible_index;
+    }
+    if (selected_visible_index != (size_t)-1 &&
+        (selected_visible_index < state->sensor_row_offset ||
+         selected_visible_index >= state->sensor_row_offset + PROGTP_VISIBLE_ROWS)) {
+        state->sensor_row_offset = (selected_visible_index / PROGTP_VISIBLE_ROWS) * PROGTP_VISIBLE_ROWS;
+    }
+
+    visible_index = 0;
+    for (size_t i = 0; i < state->sensors.length && state->sensor_row_count < PROGTP_VISIBLE_ROWS; ++i) {
+        const ProgTP_SensorReading *reading = &state->sensors.items[i];
+        if (!SensorVisible(state, reading)) {
+            continue;
+        }
+        if (visible_index >= state->sensor_row_offset) {
+            size_t row = state->sensor_row_count++;
+            state->sensor_row_indices[row] = i;
+            snprintf(
+                state->sensor_row_texts[row],
+                sizeof(state->sensor_row_texts[row]),
+                "%s | %s | %.2f %s | %s",
+                reading->code,
+                reading->type,
+                reading->value,
+                reading->unit,
+                reading->state);
+        }
+        ++visible_index;
+    }
+    snprintf(
+        state->sensor_row_page_text,
+        sizeof(state->sensor_row_page_text),
+        "Showing %zu-%zu of %zu",
+        state->sensor_row_offset + 1u,
+        state->sensor_row_offset + state->sensor_row_count,
+        visible_count);
+}
+
 static void PrepareText(ProgTP_AppState *state) {
     if (state->active_module == 1) {
         ProgTP_EquipmentInventorySummary(&state->inventory, state->summary_text, sizeof(state->summary_text));
@@ -1079,6 +1415,12 @@ static void PrepareText(ProgTP_AppState *state) {
             sizeof(state->summary_text),
             "%s",
             "Execute ping tests, save raw command output, and log connectivity checks");
+    } else if (state->active_module == 3) {
+        snprintf(
+            state->summary_text,
+            sizeof(state->summary_text),
+            "%s",
+            "Import rack sensor readings, flag anomalies, and open technical incidents");
     } else {
         snprintf(
             state->summary_text,
@@ -1108,7 +1450,7 @@ static void PrepareText(ProgTP_AppState *state) {
     if (state->input_mode != PROGTP_APP_INPUT_NONE) {
         const char *active_input = state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND
             ? state->connectivity_custom_command
-            : state->input_text;
+            : state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE ? state->sensor_search_text : state->input_text;
         snprintf(state->help_text, sizeof(state->help_text), "%s: %.320s", InputModeName(state->input_mode), active_input);
         snprintf(
             state->search_display_text,
@@ -1134,6 +1476,7 @@ static void PrepareText(ProgTP_AppState *state) {
     }
     PrepareRows(state);
     PrepareConnectivityText(state);
+    PrepareSensorText(state);
 }
 
 static void TextLine(const char *text, uint16_t size, Clay_Color color) {
@@ -1160,6 +1503,13 @@ static void HandleUiInteraction(Clay_ElementId element_id, Clay_PointerData poin
         ProgTP_AppFormField field = (ProgTP_AppFormField)(value - PROGTP_UI_FORM_FIELD_BASE);
         if (field >= 0 && field < PROGTP_APP_FORM_FIELD_COUNT) {
             progtp_interaction_state->form_field = field;
+        }
+        return;
+    }
+    if (value >= PROGTP_UI_SENSOR_SELECT_BASE) {
+        size_t index = (size_t)(value - PROGTP_UI_SENSOR_SELECT_BASE);
+        if (index < progtp_interaction_state->sensors.length) {
+            progtp_interaction_state->selected_sensor_index = index;
         }
         return;
     }
@@ -1735,6 +2085,167 @@ static void ConnectivityModule(ProgTP_AppState *state) {
     }
 }
 
+static void SensorRows(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("SensorTable"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = {
+                progtp_ui_compact ? CLAY_SIZING_GROW(0) : CLAY_SIZING_GROW(.min = 380.0f),
+                CLAY_SIZING_GROW(.min = 220.0f),
+            },
+            .childGap = 2,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(5),
+    }) {
+        CLAY(CLAY_ID("SensorTableHeader"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight() + 8.0f) },
+                .padding = { 10, 10, 4, 4 },
+                .childGap = 8,
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = COLOR_SURFACE_DARK,
+        }) {
+            CLAY(CLAY_ID("SensorTableTitle"), {
+                .layout = {
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap = 2,
+                },
+            }) {
+                TextLine("Latest sensor readings", 13, COLOR_TEXT);
+                TextLine(state->sensor_row_page_text, 12, COLOR_MUTED);
+            }
+            Button(500, "Prev Page", PROGTP_APP_ACTION_SENSOR_PAGE_PREVIOUS, false, false);
+            Button(501, "Next Page", PROGTP_APP_ACTION_SENSOR_PAGE_NEXT, false, false);
+        }
+        for (size_t i = 0; i < state->sensor_row_count; ++i) {
+            size_t reading_index = state->sensor_row_indices[i];
+            const ProgTP_SensorReading *reading = &state->sensors.items[reading_index];
+            bool selected = reading_index == state->selected_sensor_index;
+            bool anomalous = ProgTP_SensorReadingIsAnomalous(reading);
+            CLAY(CLAY_IDI("SensorRow", (uint32_t)i), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = selected ? COLOR_ACCENT : anomalous ? (Clay_Color){255, 238, 218, 255} : (i % 2u == 0 ? COLOR_SURFACE : COLOR_SURFACE_ALT),
+            }) {
+                AttachInteraction(PROGTP_UI_SENSOR_SELECT_BASE + (uintptr_t)reading_index);
+                TextLine(state->sensor_row_texts[i], 12, selected ? COLOR_WHITE : anomalous ? COLOR_DANGER : COLOR_TEXT);
+            }
+        }
+    }
+}
+
+static void SensorDetailPanel(ProgTP_AppState *state) {
+    bool anomalous = state->sensors.length > 0 &&
+        ProgTP_SensorReadingIsAnomalous(&state->sensors.items[state->selected_sensor_index]);
+    CLAY(CLAY_ID("SensorDetailPanel"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = {
+                progtp_ui_compact ? CLAY_SIZING_GROW(0) : CLAY_SIZING_FIXED(360.0f),
+                CLAY_SIZING_GROW(.min = 180.0f),
+            },
+            .padding = CLAY_PADDING_ALL(14),
+            .childGap = 8,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(5),
+    }) {
+        TextLine("Selected reading", 16, COLOR_TEXT);
+        TextLine(state->sensor_selected_text, 13, anomalous ? COLOR_DANGER : COLOR_MUTED);
+        TextLine("sensores_rack.txt", 12, COLOR_ACCENT_DARK);
+        TextLine("leituras_sensores.dat / log_sensores.txt", 12, COLOR_MUTED);
+        if (state->sensor_has_import_result) {
+            TextLine(state->sensor_import_result.summary, 13, COLOR_TEXT);
+        }
+        if (state->status[0] != '\0') {
+            TextLine(state->status, 13, anomalous ? COLOR_DANGER : COLOR_MUTED);
+        }
+    }
+}
+
+static void SensorModule(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("SensorModule"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+            .childGap = progtp_ui_compact ? 8 : 12,
+        },
+    }) {
+        CLAY(CLAY_ID("SensorMetrics"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 10,
+            },
+        }) {
+            Metric("Readings", state->sensor_metric_total_text);
+            Metric("Anomalies", state->sensor_metric_anomaly_text);
+            Metric("Selected", state->sensor_metric_selected_text);
+        }
+        CLAY(CLAY_ID("SensorActions"), {
+            .layout = {
+                .layoutDirection = progtp_ui_compact ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = ControlGap(),
+            },
+        }) {
+            Button(510, "Import", PROGTP_APP_ACTION_SENSOR_IMPORT, true, false);
+            Button(511, "Prev", PROGTP_APP_ACTION_SENSOR_PREVIOUS, false, false);
+            Button(512, "Next", PROGTP_APP_ACTION_SENSOR_NEXT, false, false);
+            Button(513, "All", PROGTP_APP_ACTION_SENSOR_FILTER_ALL, !state->sensor_filter_anomalous, false);
+            Button(514, "Anomalies", PROGTP_APP_ACTION_SENSOR_FILTER_ANOMALOUS, state->sensor_filter_anomalous, false);
+        }
+        CLAY(CLAY_ID("SensorSearch"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = ControlGap(),
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            CLAY(CLAY_ID("SensorSearchInput"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(.min = 180.0f), CLAY_SIZING_FIXED(ControlHeight()) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = COLOR_SURFACE,
+                .border = {
+                    .color = state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE ? COLOR_ACCENT : COLOR_LINE,
+                    .width = {
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        0,
+                    },
+                },
+                .cornerRadius = CLAY_CORNER_RADIUS(5),
+            }) {
+                AttachInteraction(PROGTP_APP_ACTION_SENSOR_SEARCH_FIELD);
+                TextLine(state->sensor_search_display, 13, state->input_mode == PROGTP_APP_INPUT_SENSOR_CODE ? COLOR_TEXT : COLOR_MUTED);
+            }
+            Button(515, "Find", PROGTP_APP_ACTION_INPUT_SUBMIT, false, false);
+        }
+        CLAY(CLAY_ID("SensorContent"), {
+            .layout = {
+                .layoutDirection = progtp_ui_compact ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                .childGap = 12,
+            },
+        }) {
+            SensorRows(state);
+            SensorDetailPanel(state);
+        }
+    }
+}
+
 static const char *ModuleFileName(int module) {
     static const char *file_names[] = {
         "",
@@ -2128,6 +2639,8 @@ static void MainModule(ProgTP_AppState *state) {
         InventoryModule(state);
     } else if (state->active_module == 2) {
         ConnectivityModule(state);
+    } else if (state->active_module == 3) {
+        SensorModule(state);
     } else {
         PlaceholderModule(state->active_module);
     }

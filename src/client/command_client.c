@@ -144,6 +144,49 @@ bool ProgTP_SaveRemoteInventory(const char *remote_url, const ProgTP_EquipmentIn
     return ok;
 }
 
+bool ProgTP_LoadRemoteSensors(const char *remote_url, ProgTP_SensorStore *store, char *error, size_t error_size) {
+    char endpoint[512];
+    BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/sensors");
+
+    ResponseBuffer response = {0};
+    if (!PerformHttpRequest(endpoint, "GET", NULL, 0, &response, error, error_size)) {
+        return false;
+    }
+
+    bool parsed = ProgTP_SensorStoreFromJson(response.data, response.length, store, error, error_size);
+    free(response.data);
+    if (!parsed && error_size > 0 && error[0] == '\0') {
+        snprintf(error, error_size, "server returned invalid sensor JSON");
+    }
+    return parsed;
+}
+
+bool ProgTP_RunRemoteSensorImport(
+    const char *remote_url,
+    ProgTP_SensorStore *store,
+    ProgTP_SensorImportResult *result,
+    char *error,
+    size_t error_size) {
+    char endpoint[512];
+    BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/sensors/import");
+    ResponseBuffer response = {0};
+    if (!PerformHttpRequest(endpoint, "POST", "{}", 2u, &response, error, error_size)) {
+        return false;
+    }
+    bool parsed = ProgTP_SensorImportResponseFromJson(
+        response.data,
+        response.length,
+        result,
+        store,
+        error,
+        error_size);
+    free(response.data);
+    if (!parsed && error_size > 0 && error[0] == '\0') {
+        snprintf(error, error_size, "server returned invalid sensor import JSON");
+    }
+    return parsed;
+}
+
 bool ProgTP_RunRemoteConnectivity(
     const char *remote_url,
     const ProgTP_ConnectivityRequest *request,
@@ -184,6 +227,22 @@ bool ProgTP_RunLocalConnectivity(
         "resultado_ping.txt",
         "resultado_comando.txt",
         "log_monitorizacao.txt",
+        "incidentes.dat",
+        result,
+        error,
+        error_size);
+}
+
+bool ProgTP_RunLocalSensorImport(
+    ProgTP_SensorStore *store,
+    ProgTP_SensorImportResult *result,
+    char *error,
+    size_t error_size) {
+    return ProgTP_SensorStoreImportText(
+        store,
+        "sensores_rack.txt",
+        "leituras_sensores.dat",
+        "log_sensores.txt",
         "incidentes.dat",
         result,
         error,

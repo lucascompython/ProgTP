@@ -1,0 +1,4 @@
+TEMP_RACK;Temperatura da rack;38.5;C;CRITICO
+HUM_RACK;Humidade da rack;72;%;AVISO
+UPS_BAT;Bateria da UPS;18;%;CRITICO
+UPS_ENERGIA;Estado da energia;0;-;FALHA_REDE

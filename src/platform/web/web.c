@@ -118,6 +118,25 @@ PROGTP_WEB_EXPORT bool ImportInventoryJson(uint32_t json_length) {
     return true;
 }
 
+PROGTP_WEB_EXPORT bool ImportSensorsJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppSetStatus(&progtp_web_app_state, "HTTP sensor data is too large");
+        return false;
+    }
+    ProgTP_SensorStore store;
+    ProgTP_SensorStoreInit(&store);
+    char error[256] = {0};
+    bool ok = ProgTP_SensorStoreFromJson(progtp_web_json, json_length, &store, error, sizeof(error));
+    if (ok) {
+        ProgTP_AppUseLoadedSensors(&progtp_web_app_state, &store, "Loaded sensors from HTTP server");
+    } else {
+        ProgTP_AppSetStatus(&progtp_web_app_state, error[0] ? error : "Invalid HTTP sensor JSON");
+    }
+    ProgTP_SensorStoreDestroy(&store);
+    return ok;
+}
+
 PROGTP_WEB_EXPORT uint32_t ExportInventoryJson(void) {
     EnsureWebAppInitialized();
     size_t json_length = 0;
@@ -202,4 +221,46 @@ PROGTP_WEB_EXPORT void FailConnectivityRequest(uint32_t message_length) {
     }
     progtp_web_json[message_length] = '\0';
     ProgTP_AppFailConnectivityRequest(&progtp_web_app_state, progtp_web_json);
+}
+
+PROGTP_WEB_EXPORT bool TakeSensorImportRequest(void) {
+    EnsureWebAppInitialized();
+    return ProgTP_AppTakeSensorImportRequest(&progtp_web_app_state);
+}
+
+PROGTP_WEB_EXPORT bool ImportSensorImportResultJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppFailSensorImport(&progtp_web_app_state, "Sensor import response is too large");
+        return false;
+    }
+    ProgTP_SensorStore store;
+    ProgTP_SensorStoreInit(&store);
+    ProgTP_SensorImportResult result;
+    char error[256] = {0};
+    bool ok = ProgTP_SensorImportResponseFromJson(
+        progtp_web_json,
+        json_length,
+        &result,
+        &store,
+        error,
+        sizeof(error));
+    if (ok) {
+        ProgTP_AppCompleteSensorImport(&progtp_web_app_state, &result, &store);
+    } else {
+        ProgTP_AppFailSensorImport(
+            &progtp_web_app_state,
+            error[0] ? error : "Invalid sensor import result");
+    }
+    ProgTP_SensorStoreDestroy(&store);
+    return ok;
+}
+
+PROGTP_WEB_EXPORT void FailSensorImport(uint32_t message_length) {
+    EnsureWebAppInitialized();
+    if (message_length >= PROGTP_WEB_JSON_CAPACITY) {
+        message_length = PROGTP_WEB_JSON_CAPACITY - 1u;
+    }
+    progtp_web_json[message_length] = '\0';
+    ProgTP_AppFailSensorImport(&progtp_web_app_state, progtp_web_json);
 }

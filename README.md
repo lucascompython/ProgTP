@@ -79,6 +79,12 @@ The web target is served by the same server:
 ./build/progtp-server --port 8000 --public build
 ```
 
+Linting:
+
+```sh
+meson compile -C build lint
+```
+
 Open `http://localhost:8000/index.html`.
 
 ## Shared App
@@ -102,6 +108,7 @@ Current overlays:
 
 - [ ] make the cursor look "clickable" on web and mobile
 - [ ] add a nice way to see reports in the app itself
+- [ ] try to split the huge app.c file into ui files for each module
 - [ ] add cli --help usage info
 - [x] maybe structure project better for helper functions like comparing strings ignoring case, validating IP/MAC formats, etc in connectivity.c for example
 - [x] see if for example i can use fio's helpers better instead of implementing my own

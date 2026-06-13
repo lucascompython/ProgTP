@@ -8,5 +8,8 @@ void ProgTP_TextCopy(char *destination, size_t destination_size, const char *sou
 bool ProgTP_TextIsEmpty(const char *value);
 bool ProgTP_TextEqualsIgnoreCase(const char *left, const char *right);
 bool ProgTP_TextContainsIgnoreCase(const char *text, const char *needle);
+char *ProgTP_TextTrimLeft(char *value);
+void ProgTP_TextTrimRight(char *value);
+char *ProgTP_TextTrim(char *value);
 
 #endif
