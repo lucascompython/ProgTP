@@ -418,9 +418,13 @@ if platform_targets.length() == 0
 endif
 
 clang_tidy = find_program('clang-tidy', required: false)
+lint_script = files('tools/lint.sh')
 if clang_tidy.found() and lint_sources.length() > 0
     run_target(
         'lint',
-        command: [clang_tidy, '-p', meson.current_build_dir()] + lint_sources,
+        command: [
+            'sh', lint_script,
+            meson.current_build_dir(),
+        ] + lint_sources,
     )
 endif
