@@ -199,6 +199,7 @@ void ProgTP_AppInit(ProgTP_AppState *state, bool persistence_enabled, const char
     memset(state, 0, sizeof(*state));
     state->active_module = 1;
     state->persistence_enabled = persistence_enabled;
+    snprintf(state->sensor_input_path, sizeof(state->sensor_input_path), "%s", "sensores_rack.txt");
     snprintf(
         state->connectivity_result.summary,
         sizeof(state->connectivity_result.summary),
@@ -552,6 +553,16 @@ static void CloseModal(ProgTP_AppState *state) {
     state->input_mode = PROGTP_APP_INPUT_NONE;
 }
 
+static void OpenSensorFileModal(ProgTP_AppState *state) {
+    state->modal = PROGTP_APP_MODAL_SENSOR_FILE;
+    state->input_mode = PROGTP_APP_INPUT_NONE;
+}
+
+static void SubmitSensorFile(ProgTP_AppState *state) {
+    CloseModal(state);
+    snprintf(state->status, sizeof(state->status), "Sensor file: %s", state->sensor_input_path);
+}
+
 static void OpenAddModal(ProgTP_AppState *state) {
     state->modal = PROGTP_APP_MODAL_ADD_EQUIPMENT;
     state->input_mode = PROGTP_APP_INPUT_NONE;
@@ -859,12 +870,29 @@ static void SubmitModal(ProgTP_AppState *state) {
         ConfirmRemoveSelected(state);
     } else if (state->modal == PROGTP_APP_MODAL_ADD_EQUIPMENT || state->modal == PROGTP_APP_MODAL_UPDATE_EQUIPMENT) {
         SubmitEquipmentForm(state);
+    } else if (state->modal == PROGTP_APP_MODAL_SENSOR_FILE) {
+        SubmitSensorFile(state);
     }
 }
 
 static bool HandleModalAction(ProgTP_AppState *state, ProgTP_AppAction action) {
     if (state->modal == PROGTP_APP_MODAL_NONE) {
         return false;
+    }
+    if (state->modal == PROGTP_APP_MODAL_SENSOR_FILE) {
+        switch (action) {
+            case PROGTP_APP_ACTION_INPUT_BACKSPACE: {
+                size_t len = strlen(state->sensor_input_path);
+                if (len > 0) {
+                    state->sensor_input_path[len - 1u] = '\0';
+                }
+                return true;
+            }
+            case PROGTP_APP_ACTION_INPUT_SUBMIT:
+            case PROGTP_APP_ACTION_FORM_SUBMIT: SubmitSensorFile(state); return true;
+            case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
+            default: return true;
+        }
     }
     switch (action) {
         case PROGTP_APP_ACTION_INPUT_BACKSPACE: BackspaceFormField(state); return true;
@@ -1094,6 +1122,10 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             state->sensor_search_text[0] = '\0';
             SetStatus(state, "Sensor code: type value and press Enter");
             break;
+        case PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE:
+            OpenSensorFileModal(state);
+            SetStatus(state, "Enter the sensor file path");
+            break;
         case PROGTP_APP_ACTION_NONE:
         case PROGTP_APP_ACTION_INPUT_BACKSPACE:
         case PROGTP_APP_ACTION_INPUT_SUBMIT:
@@ -1118,6 +1150,15 @@ void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint) {
         }
         buffer[length] = (char)codepoint;
         buffer[length + 1u] = '\0';
+        return;
+    }
+    if (state->modal == PROGTP_APP_MODAL_SENSOR_FILE) {
+        size_t length = strlen(state->sensor_input_path);
+        if (length + 1u >= sizeof(state->sensor_input_path)) {
+            return;
+        }
+        state->sensor_input_path[length] = (char)codepoint;
+        state->sensor_input_path[length + 1u] = '\0';
         return;
     }
     if (state->input_mode == PROGTP_APP_INPUT_NONE) {
@@ -2202,6 +2243,16 @@ static void SensorModule(ProgTP_AppState *state) {
             Button(513, "All", PROGTP_APP_ACTION_SENSOR_FILTER_ALL, !state->sensor_filter_anomalous, false);
             Button(514, "Anomalies", PROGTP_APP_ACTION_SENSOR_FILTER_ANOMALOUS, state->sensor_filter_anomalous, false);
         }
+        CLAY(CLAY_ID("SensorFilePath"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = ControlGap(),
+                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            Button(516, "File", PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE, false, false);
+            TextLine(state->sensor_input_path, 12, COLOR_MUTED);
+        }
         CLAY(CLAY_ID("SensorSearch"), {
             .layout = {
                 .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
@@ -2579,6 +2630,63 @@ static void EquipmentFormModal(ProgTP_AppState *state) {
     }
 }
 
+static void SensorFileModal(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("SensorFileModal"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = { CLAY_SIZING_GROW(.min = 320.0f, .max = 500.0f), CLAY_SIZING_FIT(0) },
+            .padding = CLAY_PADDING_ALL(18),
+            .childGap = 14,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(8),
+    }) {
+        CLAY(CLAY_ID("SensorFileHeader"), {
+            .layout = {
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 4,
+            },
+        }) {
+            TextLine("Sensor file path", 21, COLOR_TEXT);
+            TextLine(state->status, 13, COLOR_MUTED);
+        }
+        CLAY(CLAY_ID("SensorFileInput"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight()) },
+                .padding = { 10, 10, 0, 0 },
+                .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = COLOR_WHITE,
+            .border = {
+                .color = COLOR_ACCENT,
+                .width = {
+                    state->terminal_rendering ? 0 : 1,
+                    state->terminal_rendering ? 0 : 1,
+                    state->terminal_rendering ? 0 : 1,
+                    state->terminal_rendering ? 0 : 1,
+                    0,
+                },
+            },
+            .cornerRadius = CLAY_CORNER_RADIUS(5),
+        }) {
+            TextLine(state->sensor_input_path, 13, COLOR_TEXT);
+        }
+        TextLine("Press Enter to confirm or Esc to cancel", 12, COLOR_MUTED);
+        CLAY(CLAY_ID("SensorFileActions"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 8,
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            Button(520, "Cancel", PROGTP_APP_ACTION_FORM_CANCEL, false, false);
+            Button(521, "Save", PROGTP_APP_ACTION_FORM_SUBMIT, true, false);
+        }
+    }
+}
+
 static void RemoveConfirmModal(ProgTP_AppState *state) {
     CLAY(CLAY_ID("RemoveConfirmModal"), {
         .layout = {
@@ -2628,6 +2736,8 @@ static void ModalOverlay(ProgTP_AppState *state, Clay_Dimensions layout_dimensio
     }) {
         if (state->modal == PROGTP_APP_MODAL_REMOVE_EQUIPMENT) {
             RemoveConfirmModal(state);
+        } else if (state->modal == PROGTP_APP_MODAL_SENSOR_FILE) {
+            SensorFileModal(state);
         } else {
             EquipmentFormModal(state);
         }

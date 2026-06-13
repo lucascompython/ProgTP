@@ -54,6 +54,15 @@ bool ProgTP_SensorStoreImportText(
     ProgTP_SensorImportResult *result,
     char *error,
     size_t error_size);
+bool ProgTP_SensorStoreImportTextFromContent(
+    ProgTP_SensorStore *store,
+    const char *content,
+    const char *binary_path,
+    const char *log_path,
+    const char *incident_path,
+    ProgTP_SensorImportResult *result,
+    char *error,
+    size_t error_size);
 bool ProgTP_SensorStoreLoadBinary(ProgTP_SensorStore *store, const char *path, char *error, size_t error_size);
 bool ProgTP_SensorStoreSaveBinary(const ProgTP_SensorStore *store, const char *path, char *error, size_t error_size);
 void ProgTP_SensorReadingFormatLine(const ProgTP_SensorReading *reading, char *buffer, size_t buffer_size);

@@ -165,8 +165,10 @@ bool ProgTP_RunRemoteSensorImport(
     const char *remote_url,
     ProgTP_SensorStore *store,
     ProgTP_SensorImportResult *result,
+    const char *input_path,
     char *error,
     size_t error_size) {
+    (void)input_path;
     char endpoint[512];
     BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/sensors/import");
     ResponseBuffer response = {0};
@@ -236,11 +238,12 @@ bool ProgTP_RunLocalConnectivity(
 bool ProgTP_RunLocalSensorImport(
     ProgTP_SensorStore *store,
     ProgTP_SensorImportResult *result,
+    const char *input_path,
     char *error,
     size_t error_size) {
     return ProgTP_SensorStoreImportText(
         store,
-        "sensores_rack.txt",
+        input_path && input_path[0] != '\0' ? input_path : "sensores_rack.txt",
         "leituras_sensores.dat",
         "log_sensores.txt",
         "incidentes.dat",

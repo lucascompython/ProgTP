@@ -15,6 +15,7 @@ bool ProgTP_RunRemoteSensorImport(
     const char *remote_url,
     ProgTP_SensorStore *store,
     ProgTP_SensorImportResult *result,
+    const char *input_path,
     char *error,
     size_t error_size);
 bool ProgTP_RunRemoteConnectivity(
@@ -32,6 +33,7 @@ bool ProgTP_RunLocalConnectivity(
 bool ProgTP_RunLocalSensorImport(
     ProgTP_SensorStore *store,
     ProgTP_SensorImportResult *result,
+    const char *input_path,
     char *error,
     size_t error_size);
 

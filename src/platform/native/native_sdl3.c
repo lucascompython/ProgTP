@@ -38,6 +38,7 @@ typedef struct {
     bool remote;
     bool ok;
     char remote_url[512];
+    char sensor_input_path[512];
     char error[256];
     ProgTP_SensorStore store;
     ProgTP_SensorImportResult result;
@@ -100,6 +101,7 @@ static ProgTP_AppAction ActionFromKey(SDL_Keycode key) {
         case SDLK_8: return PROGTP_APP_ACTION_MODULE_8;
         case SDLK_C: return PROGTP_APP_ACTION_SEARCH_CODE;
         case SDLK_G: return PROGTP_APP_ACTION_SENSOR_IMPORT;
+        case SDLK_O: return PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE;
         case SDLK_I: return PROGTP_APP_ACTION_SEARCH_IP;
         case SDLK_M: return PROGTP_APP_ACTION_SEARCH_MAC;
         case SDLK_BACKSPACE: return PROGTP_APP_ACTION_INPUT_BACKSPACE;
@@ -141,14 +143,16 @@ static int ConnectivityThreadMain(void *user_data) {
 
 static int SensorThreadMain(void *user_data) {
     SensorJob *job = user_data;
+    const char *path = job->sensor_input_path[0] != '\0' ? job->sensor_input_path : NULL;
     job->ok = job->remote
         ? ProgTP_RunRemoteSensorImport(
             job->remote_url,
             &job->store,
             &job->result,
+            path,
             job->error,
             sizeof(job->error))
-        : ProgTP_RunLocalSensorImport(&job->store, &job->result, job->error, sizeof(job->error));
+        : ProgTP_RunLocalSensorImport(&job->store, &job->result, path, job->error, sizeof(job->error));
     atomic_store_explicit(&job->done, true, memory_order_release);
     return 0;
 }
@@ -225,6 +229,7 @@ static void StartSensorJob(SensorJob *job, const char *remote_url, const ProgTP_
     if (remote_url) {
         snprintf(job->remote_url, sizeof(job->remote_url), "%s", remote_url);
     }
+    snprintf(job->sensor_input_path, sizeof(job->sensor_input_path), "%s", app_state->sensor_input_path);
     if (!ProgTP_SensorStoreCopy(&job->store, &app_state->sensors, job->error, sizeof(job->error))) {
         job->ok = false;
         atomic_store(&job->done, true);
@@ -352,17 +357,20 @@ int main(int argc, char **argv) {
                 Clay_SetLayoutDimensions((Clay_Dimensions){ (float)width, (float)height });
             } else if (event.type == SDL_EVENT_MOUSE_WHEEL) {
                 Clay_UpdateScrollContainers(true, (Clay_Vector2){ event.wheel.x, event.wheel.y }, 0.01f);
+            } else if (event.type == SDL_EVENT_TEXT_INPUT) {
+                if (app_state.input_mode != PROGTP_APP_INPUT_NONE || ProgTP_AppModalActive(&app_state)) {
+                    const char *text = event.text.text;
+                    if (text && (unsigned char)text[0] >= 32u) {
+                        int codepoint = (unsigned char)text[0];
+                        if ((text[0] & 0xE0) == 0xC0 && text[1]) {
+                            codepoint = ((text[0] & 0x1F) << 6) | (text[1] & 0x3F);
+                        }
+                        ProgTP_AppHandleTextInput(&app_state, (uint32_t)codepoint);
+                    }
+                }
             } else if (event.type == SDL_EVENT_KEY_DOWN) {
                 ProgTP_AppAction action = ActionFromKey(event.key.key);
-                if ((app_state.input_mode != PROGTP_APP_INPUT_NONE || ProgTP_AppModalActive(&app_state)) &&
-                    action != PROGTP_APP_ACTION_INPUT_BACKSPACE &&
-                    action != PROGTP_APP_ACTION_INPUT_SUBMIT &&
-                    event.key.key >= 32u &&
-                    event.key.key <= 126u) {
-                    ProgTP_AppHandleTextInput(&app_state, (uint32_t)event.key.key);
-                } else {
-                    ProgTP_AppHandleAction(&app_state, action);
-                }
+                ProgTP_AppHandleAction(&app_state, action);
             }
         }
 

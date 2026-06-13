@@ -74,6 +74,7 @@ typedef enum {
     PROGTP_APP_ACTION_SENSOR_FILTER_ALL,
     PROGTP_APP_ACTION_SENSOR_FILTER_ANOMALOUS,
     PROGTP_APP_ACTION_SENSOR_SEARCH_FIELD,
+    PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE,
 } ProgTP_AppAction;
 
 typedef enum {
@@ -97,6 +98,7 @@ typedef enum {
     PROGTP_APP_MODAL_ADD_EQUIPMENT,
     PROGTP_APP_MODAL_UPDATE_EQUIPMENT,
     PROGTP_APP_MODAL_REMOVE_EQUIPMENT,
+    PROGTP_APP_MODAL_SENSOR_FILE,
 } ProgTP_AppModal;
 
 typedef enum {
@@ -191,6 +193,7 @@ typedef struct {
     size_t sensor_row_count;
     size_t sensor_row_offset;
     char sensor_selected_text[320];
+    char sensor_input_path[512];
 } ProgTP_AppState;
 
 void ProgTP_HandleClayError(Clay_ErrorData errorData);

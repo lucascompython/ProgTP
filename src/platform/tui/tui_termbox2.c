@@ -46,6 +46,7 @@ typedef struct {
     bool remote;
     bool ok;
     char remote_url[512];
+    char sensor_input_path[512];
     char error[256];
     ProgTP_SensorStore store;
     ProgTP_SensorImportResult result;
@@ -77,6 +78,7 @@ static ProgTP_AppAction ActionFromTermboxEvent(const struct tb_event *event) {
         case '8': return PROGTP_APP_ACTION_MODULE_8;
         case 'c': case 'C': return PROGTP_APP_ACTION_SEARCH_CODE;
         case 'g': case 'G': return PROGTP_APP_ACTION_SENSOR_IMPORT;
+        case 'o': case 'O': return PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE;
         case 'i': case 'I': return PROGTP_APP_ACTION_SEARCH_IP;
         case 'm': case 'M': return PROGTP_APP_ACTION_SEARCH_MAC;
         case 'w': case 'W': return PROGTP_APP_ACTION_SAVE;
@@ -114,14 +116,16 @@ static int ConnectivityThreadMain(void *user_data) {
 
 static int SensorThreadMain(void *user_data) {
     SensorJob *job = user_data;
+    const char *path = job->sensor_input_path[0] != '\0' ? job->sensor_input_path : NULL;
     job->ok = job->remote
         ? ProgTP_RunRemoteSensorImport(
             job->remote_url,
             &job->store,
             &job->result,
+            path,
             job->error,
             sizeof(job->error))
-        : ProgTP_RunLocalSensorImport(&job->store, &job->result, job->error, sizeof(job->error));
+        : ProgTP_RunLocalSensorImport(&job->store, &job->result, path, job->error, sizeof(job->error));
     atomic_store_explicit(&job->done, true, memory_order_release);
     return 0;
 }
@@ -199,6 +203,7 @@ static void StartSensorJob(SensorJob *job, const char *remote_url, const ProgTP_
     if (remote_url) {
         snprintf(job->remote_url, sizeof(job->remote_url), "%s", remote_url);
     }
+    snprintf(job->sensor_input_path, sizeof(job->sensor_input_path), "%s", app_state->sensor_input_path);
     if (!ProgTP_SensorStoreCopy(&job->store, &app_state->sensors, job->error, sizeof(job->error))) {
         job->ok = false;
         atomic_store(&job->done, true);

@@ -175,11 +175,12 @@ static bool AppendSensorLog(
         reading->unit,
         reading->state,
         outcome);
-    bool ok = written > 0 && fclose(file) == 0;
-    if (!ok) {
+    fclose(file);
+    if (written <= 0) {
         ProgTP_SetError(error, error_size, "could not write sensor log");
+        return false;
     }
-    return ok;
+    return true;
 }
 
 static bool CreateSensorIncident(
@@ -209,6 +210,68 @@ static bool CreateSensorIncident(
         error_size);
 }
 
+static bool ImportLines(
+    ProgTP_SensorStore *store,
+    const char *timestamp,
+    const char *log_path,
+    const char *incident_path,
+    ProgTP_SensorImportResult *result,
+    const char *(*next_line)(void *context),
+    void *context,
+    char *error,
+    size_t error_size) {
+    const char *line;
+    uint32_t line_number = 0;
+    while ((line = next_line(context)) != NULL) {
+        ++line_number;
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer), "%s", line);
+        ProgTP_TextTrimRight(buffer);
+        char *trimmed = ProgTP_TextTrimLeft(buffer);
+        if (trimmed[0] == '\0' || trimmed[0] == '#') {
+            continue;
+        }
+        ProgTP_SensorReading reading;
+        if (!ParseReadingLine(trimmed, &reading, timestamp, error, error_size)) {
+            char detail[160];
+            snprintf(detail, sizeof(detail), "%s", error ? error : "invalid sensor line");
+            char message[224];
+            snprintf(message, sizeof(message), "line %u: %s", line_number, detail);
+            ProgTP_SetError(error, error_size, message);
+            return false;
+        }
+        if (!AppendReading(store, &reading, error, error_size)) {
+            return false;
+        }
+        ++result->imported_count;
+        bool anomalous = ProgTP_SensorReadingIsAnomalous(&reading);
+        if (anomalous) {
+            ++result->anomalous_count;
+            if (!CreateSensorIncident(incident_path, &reading, error, error_size)) {
+                return false;
+            }
+            ++result->incidents_created;
+        }
+        if (!AppendSensorLog(log_path, &reading, anomalous ? "INCIDENT_CREATED" : "OK", error, error_size)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+typedef struct {
+    FILE *file;
+} FileLineContext;
+
+static const char *NextFileLine(void *context) {
+    FileLineContext *fc = context;
+    static char line[256];
+    if (fgets(line, sizeof(line), fc->file)) {
+        return line;
+    }
+    return NULL;
+}
+
 bool ProgTP_SensorStoreImportText(
     ProgTP_SensorStore *store,
     const char *input_path,
@@ -232,45 +295,71 @@ bool ProgTP_SensorStoreImportText(
     }
     char timestamp[PROGTP_SENSOR_TIMESTAMP_SIZE];
     ProgTP_FormatCurrentTimestamp(timestamp, sizeof(timestamp));
-    char line[256];
-    uint32_t line_number = 0;
-    while (fgets(line, sizeof(line), file)) {
-        ++line_number;
-        ProgTP_TextTrimRight(line);
-        char *trimmed = ProgTP_TextTrimLeft(line);
-        if (trimmed[0] == '\0' || trimmed[0] == '#') {
-            continue;
-        }
-        ProgTP_SensorReading reading;
-        if (!ParseReadingLine(trimmed, &reading, timestamp, error, error_size)) {
-            char detail[160];
-            snprintf(detail, sizeof(detail), "%s", error ? error : "invalid sensor line");
-            char message[224];
-            snprintf(message, sizeof(message), "line %u: %s", line_number, detail);
-            ProgTP_SetError(error, error_size, message);
-            fclose(file);
-            return false;
-        }
-        if (!AppendReading(store, &reading, error, error_size)) {
-            fclose(file);
-            return false;
-        }
-        ++result->imported_count;
-        bool anomalous = ProgTP_SensorReadingIsAnomalous(&reading);
-        if (anomalous) {
-            ++result->anomalous_count;
-            if (!CreateSensorIncident(incident_path, &reading, error, error_size)) {
-                fclose(file);
-                return false;
-            }
-            ++result->incidents_created;
-        }
-        if (!AppendSensorLog(log_path, &reading, anomalous ? "INCIDENT_CREATED" : "OK", error, error_size)) {
-            fclose(file);
-            return false;
-        }
-    }
+    FileLineContext fc = { .file = file };
+    bool ok = ImportLines(store, timestamp, log_path, incident_path, result, NextFileLine, &fc, error, error_size);
     fclose(file);
+    if (!ok) {
+        return false;
+    }
+    if (!ProgTP_SensorStoreSaveBinary(store, binary_path, error, error_size)) {
+        return false;
+    }
+    snprintf(
+        result->summary,
+        sizeof(result->summary),
+        "Imported %u sensor readings, %u anomalous, %u incidents",
+        result->imported_count,
+        result->anomalous_count,
+        result->incidents_created);
+    return true;
+}
+
+typedef struct {
+    const char *cursor;
+    const char *end;
+    char line[256];
+} ContentLineContext;
+
+static const char *NextContentLine(void *context) {
+    ContentLineContext *cc = context;
+    if (cc->cursor >= cc->end) {
+        return NULL;
+    }
+    size_t i = 0;
+    while (cc->cursor < cc->end && *cc->cursor != '\n' && i < sizeof(cc->line) - 1u) {
+        cc->line[i++] = *cc->cursor;
+        ++cc->cursor;
+    }
+    cc->line[i] = '\0';
+    if (cc->cursor < cc->end && *cc->cursor == '\n') {
+        ++cc->cursor;
+    }
+    return cc->line;
+}
+
+bool ProgTP_SensorStoreImportTextFromContent(
+    ProgTP_SensorStore *store,
+    const char *content,
+    const char *binary_path,
+    const char *log_path,
+    const char *incident_path,
+    ProgTP_SensorImportResult *result,
+    char *error,
+    size_t error_size) {
+    if (!store || !content || !binary_path || !log_path || !incident_path || !result) {
+        ProgTP_SetError(error, error_size, "missing sensor import data");
+        return false;
+    }
+    memset(result, 0, sizeof(*result));
+    char timestamp[PROGTP_SENSOR_TIMESTAMP_SIZE];
+    ProgTP_FormatCurrentTimestamp(timestamp, sizeof(timestamp));
+    ContentLineContext cc = {
+        .cursor = content,
+        .end = content + strlen(content),
+    };
+    if (!ImportLines(store, timestamp, log_path, incident_path, result, NextContentLine, &cc, error, error_size)) {
+        return false;
+    }
     if (!ProgTP_SensorStoreSaveBinary(store, binary_path, error, error_size)) {
         return false;
     }
