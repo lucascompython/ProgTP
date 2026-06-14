@@ -3,6 +3,7 @@
 
 #include "connectivity.h"
 #include "equipment_inventory.h"
+#include "incident_store.h"
 #include "sensor_store.h"
 
 #include <stdbool.h>
@@ -12,6 +13,26 @@ typedef struct {
     char message[128];
     char mode[32];
 } ProgTP_CommandResult;
+
+typedef enum {
+    PROGTP_INCIDENT_OP_CREATE = 0,
+    PROGTP_INCIDENT_OP_UPDATE,
+    PROGTP_INCIDENT_OP_DELETE,
+    PROGTP_INCIDENT_OP_IMPORT_LOG,
+} ProgTP_IncidentOperationType;
+
+typedef struct {
+    ProgTP_IncidentOperationType operation;
+    ProgTP_Incident incident;
+    char log_path[128];
+} ProgTP_IncidentOperationRequest;
+
+typedef struct {
+    bool success;
+    uint32_t incident_number;
+    uint32_t created_count;
+    char message[128];
+} ProgTP_IncidentOperationResponse;
 
 void ProgTP_RunLocalCommand(ProgTP_CommandResult *result);
 char *ProgTP_CommandResultToJson(const ProgTP_CommandResult *result, size_t *json_length);
@@ -54,6 +75,27 @@ bool ProgTP_ConnectivityResultFromJson(
     const char *json,
     size_t json_length,
     ProgTP_ConnectivityResult *result,
+    char *error,
+    size_t error_size);
+char *ProgTP_IncidentStoreToJson(const ProgTP_IncidentStore *store, size_t *json_length);
+bool ProgTP_IncidentStoreFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_IncidentStore *store,
+    char *error,
+    size_t error_size);
+char *ProgTP_IncidentOperationRequestToJson(const ProgTP_IncidentOperationRequest *request, size_t *json_length);
+bool ProgTP_IncidentOperationRequestFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_IncidentOperationRequest *request,
+    char *error,
+    size_t error_size);
+char *ProgTP_IncidentOperationResponseToJson(const ProgTP_IncidentOperationResponse *response, size_t *json_length);
+bool ProgTP_IncidentOperationResponseFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_IncidentOperationResponse *response,
     char *error,
     size_t error_size);
 

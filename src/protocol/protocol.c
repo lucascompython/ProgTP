@@ -511,3 +511,277 @@ bool ProgTP_ConnectivityResultFromJson(
     yyjson_doc_free(doc);
     return true;
 }
+
+static const char *IncidentStateName(ProgTP_IncidentState state) {
+    switch (state) {
+        case PROGTP_INCIDENT_PENDING: return "pending";
+        case PROGTP_INCIDENT_IN_PROGRESS: return "in_progress";
+        case PROGTP_INCIDENT_COMPLETED: return "completed";
+    }
+    return "pending";
+}
+
+static bool IncidentStateFromString(const char *value, ProgTP_IncidentState *state) {
+    if (!value) {
+        return false;
+    }
+    if (strcmp(value, "pending") == 0) {
+        *state = PROGTP_INCIDENT_PENDING;
+        return true;
+    }
+    if (strcmp(value, "in_progress") == 0) {
+        *state = PROGTP_INCIDENT_IN_PROGRESS;
+        return true;
+    }
+    if (strcmp(value, "completed") == 0) {
+        *state = PROGTP_INCIDENT_COMPLETED;
+        return true;
+    }
+    return false;
+}
+
+char *ProgTP_IncidentStoreToJson(const ProgTP_IncidentStore *store, size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_val *items = yyjson_mut_arr(doc);
+    yyjson_mut_obj_add_val(doc, root, "incidents", items);
+    if (store) {
+        for (size_t i = 0; i < store->length; ++i) {
+            const ProgTP_Incident *incident = &store->items[i];
+            yyjson_mut_val *item = yyjson_mut_obj(doc);
+            yyjson_mut_arr_add_val(items, item);
+            yyjson_mut_obj_add_uint(doc, item, "number", incident->number);
+            yyjson_mut_obj_add_uint(doc, item, "equipment_code", incident->equipment_code);
+            yyjson_mut_obj_add_str(doc, item, "source", incident->source);
+            yyjson_mut_obj_add_str(doc, item, "type", incident->type);
+            yyjson_mut_obj_add_str(doc, item, "description", incident->description);
+            yyjson_mut_obj_add_str(doc, item, "priority", incident->priority);
+            yyjson_mut_obj_add_str(doc, item, "created_at", incident->created_at);
+            yyjson_mut_obj_add_str(doc, item, "completed_at", incident->completed_at);
+            yyjson_mut_obj_add_str(doc, item, "technician", incident->technician);
+            yyjson_mut_obj_add_str(doc, item, "state", IncidentStateName(incident->state));
+        }
+    }
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_IncidentStoreFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_IncidentStore *store,
+    char *error,
+    size_t error_size) {
+    if (!store) {
+        ProgTP_SetError(error, error_size, "missing incident store");
+        return false;
+    }
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid incident store JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *items_value = yyjson_obj_get(root, "incidents");
+    if (!yyjson_is_obj(root) || !yyjson_is_arr(items_value)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "incident store JSON must contain incidents array");
+        return false;
+    }
+    ProgTP_IncidentStoreClear(store);
+    yyjson_val *item = NULL;
+    yyjson_arr_iter iter = yyjson_arr_iter_with(items_value);
+    while ((item = yyjson_arr_iter_next(&iter)) != NULL) {
+        if (!yyjson_is_obj(item)) {
+            yyjson_doc_free(doc);
+            ProgTP_SetError(error, error_size, "incident entry must be an object");
+            return false;
+        }
+        ProgTP_Incident incident = {0};
+        if (!ReadRequiredUint32(item, "number", &incident.number, error, error_size) ||
+            !ReadRequiredUint32(item, "equipment_code", &incident.equipment_code, error, error_size) ||
+            !ReadRequiredString(item, "source", incident.source, sizeof(incident.source), error, error_size) ||
+            !ReadRequiredString(item, "type", incident.type, sizeof(incident.type), error, error_size) ||
+            !ReadRequiredString(item, "description", incident.description, sizeof(incident.description), error, error_size) ||
+            !ReadRequiredString(item, "priority", incident.priority, sizeof(incident.priority), error, error_size) ||
+            !ReadRequiredString(item, "created_at", incident.created_at, sizeof(incident.created_at), error, error_size)) {
+            yyjson_doc_free(doc);
+            return false;
+        }
+        ReadOptionalString(item, "completed_at", incident.completed_at, sizeof(incident.completed_at));
+        ReadOptionalString(item, "technician", incident.technician, sizeof(incident.technician));
+        yyjson_val *state_value = yyjson_obj_get(item, "state");
+        if (!yyjson_is_str(state_value) || !IncidentStateFromString(yyjson_get_str(state_value), &incident.state)) {
+            incident.state = PROGTP_INCIDENT_PENDING;
+        }
+        if (store->capacity < store->length + 1u) {
+            size_t capacity = store->capacity == 0 ? 16u : store->capacity * 2u;
+            ProgTP_Incident *items = realloc(store->items, capacity * sizeof(*items));
+            if (!items) {
+                yyjson_doc_free(doc);
+                ProgTP_SetError(error, error_size, "not enough memory for incidents");
+                return false;
+            }
+            store->items = items;
+            store->capacity = capacity;
+        }
+        store->items[store->length++] = incident;
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
+static const char *IncidentOperationTypeName(ProgTP_IncidentOperationType type) {
+    switch (type) {
+        case PROGTP_INCIDENT_OP_CREATE: return "create";
+        case PROGTP_INCIDENT_OP_UPDATE: return "update";
+        case PROGTP_INCIDENT_OP_DELETE: return "delete";
+        case PROGTP_INCIDENT_OP_IMPORT_LOG: return "import_log";
+    }
+    return "create";
+}
+
+static bool IncidentOperationTypeFromString(const char *value, ProgTP_IncidentOperationType *type) {
+    if (!value) {
+        return false;
+    }
+    if (strcmp(value, "create") == 0) {
+        *type = PROGTP_INCIDENT_OP_CREATE;
+        return true;
+    }
+    if (strcmp(value, "update") == 0) {
+        *type = PROGTP_INCIDENT_OP_UPDATE;
+        return true;
+    }
+    if (strcmp(value, "delete") == 0) {
+        *type = PROGTP_INCIDENT_OP_DELETE;
+        return true;
+    }
+    if (strcmp(value, "import_log") == 0) {
+        *type = PROGTP_INCIDENT_OP_IMPORT_LOG;
+        return true;
+    }
+    return false;
+}
+
+char *ProgTP_IncidentOperationRequestToJson(const ProgTP_IncidentOperationRequest *request, size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "operation", IncidentOperationTypeName(request->operation));
+    yyjson_mut_obj_add_uint(doc, root, "number", request->incident.number);
+    yyjson_mut_obj_add_uint(doc, root, "equipment_code", request->incident.equipment_code);
+    yyjson_mut_obj_add_str(doc, root, "source", request->incident.source);
+    yyjson_mut_obj_add_str(doc, root, "type", request->incident.type);
+    yyjson_mut_obj_add_str(doc, root, "description", request->incident.description);
+    yyjson_mut_obj_add_str(doc, root, "priority", request->incident.priority);
+    yyjson_mut_obj_add_str(doc, root, "created_at", request->incident.created_at);
+    yyjson_mut_obj_add_str(doc, root, "completed_at", request->incident.completed_at);
+    yyjson_mut_obj_add_str(doc, root, "technician", request->incident.technician);
+    yyjson_mut_obj_add_str(doc, root, "state", IncidentStateName(request->incident.state));
+    yyjson_mut_obj_add_str(doc, root, "log_path", request->log_path);
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_IncidentOperationRequestFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_IncidentOperationRequest *request,
+    char *error,
+    size_t error_size) {
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid incident operation request JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *op_value = yyjson_obj_get(root, "operation");
+    if (!yyjson_is_obj(root) || !yyjson_is_str(op_value)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "incident operation request must contain operation");
+        return false;
+    }
+    memset(request, 0, sizeof(*request));
+    if (!IncidentOperationTypeFromString(yyjson_get_str(op_value), &request->operation)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "unknown incident operation type");
+        return false;
+    }
+    ReadOptionalString(root, "source", request->incident.source, sizeof(request->incident.source));
+    ReadOptionalString(root, "type", request->incident.type, sizeof(request->incident.type));
+    ReadOptionalString(root, "description", request->incident.description, sizeof(request->incident.description));
+    ReadOptionalString(root, "priority", request->incident.priority, sizeof(request->incident.priority));
+    ReadOptionalString(root, "created_at", request->incident.created_at, sizeof(request->incident.created_at));
+    ReadOptionalString(root, "completed_at", request->incident.completed_at, sizeof(request->incident.completed_at));
+    ReadOptionalString(root, "technician", request->incident.technician, sizeof(request->incident.technician));
+    ReadOptionalString(root, "log_path", request->log_path, sizeof(request->log_path));
+    yyjson_val *number_value = yyjson_obj_get(root, "number");
+    if (yyjson_is_uint(number_value)) {
+        request->incident.number = (uint32_t)yyjson_get_uint(number_value);
+    }
+    yyjson_val *code_value = yyjson_obj_get(root, "equipment_code");
+    if (yyjson_is_uint(code_value)) {
+        request->incident.equipment_code = (uint32_t)yyjson_get_uint(code_value);
+    }
+    yyjson_val *state_value = yyjson_obj_get(root, "state");
+    if (yyjson_is_str(state_value)) {
+        IncidentStateFromString(yyjson_get_str(state_value), &request->incident.state);
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
+char *ProgTP_IncidentOperationResponseToJson(const ProgTP_IncidentOperationResponse *response, size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_bool(doc, root, "success", response->success);
+    yyjson_mut_obj_add_uint(doc, root, "incident_number", response->incident_number);
+    yyjson_mut_obj_add_uint(doc, root, "created_count", response->created_count);
+    yyjson_mut_obj_add_str(doc, root, "message", response->message);
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_IncidentOperationResponseFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_IncidentOperationResponse *response,
+    char *error,
+    size_t error_size) {
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid incident operation response JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_obj(root)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "incident operation response must be an object");
+        return false;
+    }
+    memset(response, 0, sizeof(*response));
+    if (!ReadRequiredBool(root, "success", &response->success, error, error_size) ||
+        !ReadRequiredUint32(root, "incident_number", &response->incident_number, error, error_size) ||
+        !ReadRequiredUint32(root, "created_count", &response->created_count, error, error_size) ||
+        !ReadRequiredString(root, "message", response->message, sizeof(response->message), error, error_size)) {
+        yyjson_doc_free(doc);
+        return false;
+    }
+    yyjson_doc_free(doc);
+    return true;
+}

@@ -2,6 +2,7 @@
 #include "app_internal.h"
 
 #include "progtp_text.h"
+#include "progtp_time.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -191,13 +192,16 @@ void ProgTP_AppInit(ProgTP_AppState *state, bool persistence_enabled, const char
     snprintf(state->storage_path, sizeof(state->storage_path), "%s", storage_path ? storage_path : "equipamentos.dat");
     ProgTP_EquipmentInventoryInit(&state->inventory);
     ProgTP_SensorStoreInit(&state->sensors);
+    ProgTP_IncidentStoreInit(&state->incidents);
     LoadInventory(state);
     LoadSensors(state);
+    ProgTP_IncidentStoreLoad(&state->incidents, "incidentes.dat", state->status, sizeof(state->status));
 }
 
 void ProgTP_AppDestroy(ProgTP_AppState *state) {
     PersistIfEnabled(state);
     PersistSensorsIfEnabled(state);
+    ProgTP_IncidentStoreDestroy(&state->incidents);
     ProgTP_SensorStoreDestroy(&state->sensors);
     ProgTP_EquipmentInventoryDestroy(&state->inventory);
 }
@@ -316,6 +320,59 @@ void ProgTP_AppFailSensorImport(ProgTP_AppState *state, const char *error) {
         error ? error : "unknown error");
 }
 
+bool ProgTP_AppTakeIncidentOperationRequest(ProgTP_AppState *state, ProgTP_IncidentOperationRequest *request) {
+    if (!state->incident_operation_pending || state->incident_operation_in_flight) {
+        return false;
+    }
+    *request = state->pending_incident_operation;
+    state->incident_operation_pending = false;
+    state->incident_operation_in_flight = true;
+    SetStatus(state, "Sending incident operation to server");
+    return true;
+}
+
+void ProgTP_AppCompleteIncidentOperation(ProgTP_AppState *state, const ProgTP_IncidentOperationResponse *response) {
+    state->incident_operation_result = *response;
+    state->incident_has_result = true;
+    state->incident_operation_in_flight = false;
+    if (response->created_count > 0) {
+        char status[128];
+        snprintf(status, sizeof(status), "Imported %u incidents from log", response->created_count);
+        SetStatus(state, status);
+    } else {
+        SetStatus(state, response->message[0] ? response->message : "Incident operation completed");
+    }
+}
+
+void ProgTP_AppFailIncidentOperation(ProgTP_AppState *state, const char *error) {
+    state->incident_operation_pending = false;
+    state->incident_operation_in_flight = false;
+    snprintf(
+        state->status,
+        sizeof(state->status),
+        "Incident operation failed: %s",
+        error ? error : "unknown error");
+}
+
+void ProgTP_AppUseLoadedIncidents(ProgTP_AppState *state, const ProgTP_IncidentStore *store, const char *status) {
+    char copy_error[256] = {0};
+    if (!ProgTP_IncidentStoreCopy(&state->incidents, store, copy_error, sizeof(copy_error))) {
+        SetStatus(state, copy_error);
+        return;
+    }
+    state->selected_incident_index = 0;
+    state->incident_row_offset = 0;
+    SetStatus(state, status);
+}
+
+bool ProgTP_AppIncidentOperationPending(const ProgTP_AppState *state) {
+    return state->incident_operation_pending;
+}
+
+bool ProgTP_AppIncidentOperationInFlight(const ProgTP_AppState *state) {
+    return state->incident_operation_in_flight;
+}
+
 static void StartInput(ProgTP_AppState *state, ProgTP_AppInputMode mode) {
     state->input_mode = mode;
     if (mode != PROGTP_APP_INPUT_CONNECTIVITY_COMMAND) {
@@ -427,6 +484,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_NEXT:
             if (state->active_module == 3) {
                 MoveSensorSelection(state, 1);
+            } else if (state->active_module == 4) {
+                MoveIncidentSelection(state, 1);
             } else {
                 MoveSelection(state, 1);
             }
@@ -434,6 +493,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_PREVIOUS:
             if (state->active_module == 3) {
                 MoveSensorSelection(state, -1);
+            } else if (state->active_module == 4) {
+                MoveIncidentSelection(state, -1);
             } else {
                 MoveSelection(state, -1);
             }
@@ -484,7 +545,7 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_MODULE_1: state->active_module = 1; break;
         case PROGTP_APP_ACTION_MODULE_2: state->active_module = 2; break;
         case PROGTP_APP_ACTION_MODULE_3: state->active_module = 3; break;
-        case PROGTP_APP_ACTION_MODULE_4: state->active_module = 4; break;
+        case PROGTP_APP_ACTION_MODULE_4: state->active_module = 4; state->needs_incident_reload = true; break;
         case PROGTP_APP_ACTION_MODULE_5: state->active_module = 5; break;
         case PROGTP_APP_ACTION_MODULE_6: state->active_module = 6; break;
         case PROGTP_APP_ACTION_MODULE_7: state->active_module = 7; break;
@@ -563,6 +624,92 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             OpenSensorFileModal(state);
             SetStatus(state, "Enter the sensor file path");
             break;
+        case PROGTP_APP_ACTION_INCIDENT_PREVIOUS: MoveIncidentSelection(state, -1); break;
+        case PROGTP_APP_ACTION_INCIDENT_NEXT: MoveIncidentSelection(state, 1); break;
+        case PROGTP_APP_ACTION_INCIDENT_PAGE_PREVIOUS: PageIncidents(state, -1); break;
+        case PROGTP_APP_ACTION_INCIDENT_PAGE_NEXT: PageIncidents(state, 1); break;
+        case PROGTP_APP_ACTION_INCIDENT_FILTER_ALL:
+            state->incident_filter_state = 0;
+            state->incident_row_offset = 0;
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_FILTER_PENDING:
+            state->incident_filter_state = 1;
+            state->incident_row_offset = 0;
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_FILTER_IN_PROGRESS:
+            state->incident_filter_state = 2;
+            state->incident_row_offset = 0;
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_FILTER_COMPLETED:
+            state->incident_filter_state = 3;
+            state->incident_row_offset = 0;
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_ADD:
+            OpenAddIncidentModal(state);
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_EDIT:
+            OpenUpdateIncidentModal(state);
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_DELETE:
+            OpenRemoveIncidentModal(state);
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_START:
+            if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
+                ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+                incident->state = PROGTP_INCIDENT_IN_PROGRESS;
+                char save_error[128] = {0};
+                if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+                    SetStatus(state, "Incident marked as in progress");
+                } else {
+                    SetStatus(state, save_error);
+                }
+            }
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_COMPLETE:
+            if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
+                ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+                incident->state = PROGTP_INCIDENT_COMPLETED;
+                ProgTP_FormatCurrentTimestamp(incident->completed_at, sizeof(incident->completed_at));
+                char save_error[128] = {0};
+                if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+                    SetStatus(state, "Incident completed");
+                } else {
+                    SetStatus(state, save_error);
+                }
+            }
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_AUTO_IMPORT:
+            if (state->persistence_enabled) {
+                uint32_t created_count = 0;
+                char import_error[256] = {0};
+                if (ProgTP_IncidentStoreImportFromMonitoringLog(
+                        &state->incidents,
+                        "log_monitorizacao.txt",
+                        "incidentes.dat",
+                        &created_count,
+                        import_error,
+                        sizeof(import_error))) {
+                    char status[128];
+                    snprintf(status, sizeof(status), "Imported %u incidents from log_monitorizacao.txt", created_count);
+                    SetStatus(state, status);
+                } else {
+                    SetStatus(state, import_error);
+                }
+            } else {
+                if (state->incident_operation_pending || state->incident_operation_in_flight) {
+                    SetStatus(state, "An incident operation is already running");
+                } else {
+                    memset(&state->pending_incident_operation, 0, sizeof(state->pending_incident_operation));
+                    state->pending_incident_operation.operation = PROGTP_INCIDENT_OP_IMPORT_LOG;
+                    snprintf(state->pending_incident_operation.log_path, sizeof(state->pending_incident_operation.log_path), "log_monitorizacao.txt");
+                    state->incident_operation_pending = true;
+                    SetStatus(state, "Auto-import from log_monitorizacao.txt queued");
+                }
+            }
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_PRIORITY_LOW:
+        case PROGTP_APP_ACTION_INCIDENT_PRIORITY_MEDIUM:
+        case PROGTP_APP_ACTION_INCIDENT_PRIORITY_HIGH:
         case PROGTP_APP_ACTION_NONE:
         case PROGTP_APP_ACTION_INPUT_BACKSPACE:
         case PROGTP_APP_ACTION_INPUT_SUBMIT:
@@ -598,6 +745,29 @@ void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint) {
         state->sensor_input_path[length + 1u] = '\0';
         return;
     }
+    if (state->modal == PROGTP_APP_MODAL_ADD_INCIDENT || state->modal == PROGTP_APP_MODAL_UPDATE_INCIDENT) {
+        char *buffer = NULL;
+        size_t buffer_size = 0;
+        switch (state->incident_form_field) {
+            case PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE: buffer = state->incident_form_equipment_code; buffer_size = sizeof(state->incident_form_equipment_code); break;
+            case PROGTP_APP_INCIDENT_FORM_SOURCE: buffer = state->incident_form_source; buffer_size = sizeof(state->incident_form_source); break;
+            case PROGTP_APP_INCIDENT_FORM_TYPE: buffer = state->incident_form_type; buffer_size = sizeof(state->incident_form_type); break;
+            case PROGTP_APP_INCIDENT_FORM_DESCRIPTION: buffer = state->incident_form_description; buffer_size = sizeof(state->incident_form_description); break;
+            case PROGTP_APP_INCIDENT_FORM_PRIORITY: buffer = state->incident_form_priority; buffer_size = sizeof(state->incident_form_priority); break;
+            case PROGTP_APP_INCIDENT_FORM_TECHNICIAN: buffer = state->incident_form_technician; buffer_size = sizeof(state->incident_form_technician); break;
+            case PROGTP_APP_INCIDENT_FORM_FIELD_COUNT: break;
+        }
+        if (!buffer || buffer_size == 0) {
+            return;
+        }
+        size_t length = strlen(buffer);
+        if (length + 1u >= buffer_size) {
+            return;
+        }
+        buffer[length] = (char)codepoint;
+        buffer[length + 1u] = '\0';
+        return;
+    }
     if (state->input_mode == PROGTP_APP_INPUT_NONE) {
         return;
     }
@@ -630,6 +800,12 @@ static void PrepareText(ProgTP_AppState *state) {
             sizeof(state->summary_text),
             "%s",
             "Import rack sensor readings, flag anomalies, and open technical incidents");
+    } else if (state->active_module == 4) {
+        snprintf(
+            state->summary_text,
+            sizeof(state->summary_text),
+            "%s",
+            "Manage incident queue, track technical work, and auto-import from monitoring logs");
     } else {
         snprintf(
             state->summary_text,
@@ -686,6 +862,7 @@ static void PrepareText(ProgTP_AppState *state) {
     PrepareRows(state);
     PrepareConnectivityText(state);
     PrepareSensorText(state);
+    PrepareIncidentText(state);
 }
 
 static void MainModule(ProgTP_AppState *state) {
@@ -695,6 +872,8 @@ static void MainModule(ProgTP_AppState *state) {
         ConnectivityModule(state);
     } else if (state->active_module == 3) {
         SensorModule(state);
+    } else if (state->active_module == 4) {
+        IncidentModule(state);
     } else {
         PlaceholderModule(state->active_module);
     }

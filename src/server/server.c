@@ -263,6 +263,109 @@ static void OnApiSensorsImport(fio_http_s *request) {
     SendJson(request, 200, json, json_length);
 }
 
+static void OnApiIncidents(fio_http_s *request) {
+    if (!StrEquals(fio_http_opath(request), "/api/incidents")) {
+        fio_http_send_error_response(request, 404);
+        return;
+    }
+
+    char error[256] = {0};
+    ProgTP_IncidentStore store;
+    ProgTP_IncidentStoreInit(&store);
+
+    if (StrEquals(fio_http_method(request), "GET")) {
+        if (!ProgTP_IncidentStoreLoad(&store, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error))) {
+            ProgTP_IncidentStoreDestroy(&store);
+            SendText(request, 500, error);
+            return;
+        }
+        size_t json_length = 0;
+        char *json = ProgTP_IncidentStoreToJson(&store, &json_length);
+        ProgTP_IncidentStoreDestroy(&store);
+        if (!json) {
+            fio_http_send_error_response(request, 500);
+            return;
+        }
+        SendJson(request, 200, json, json_length);
+        return;
+    }
+
+    if (StrEquals(fio_http_method(request), "POST")) {
+        if (!ProgTP_IncidentStoreLoad(&store, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error))) {
+            ProgTP_IncidentStoreDestroy(&store);
+            SendText(request, 500, error);
+            return;
+        }
+        fio_http_body_seek(request, 0);
+        fio_str_info_s body = fio_http_body_read(request, (size_t)-1);
+        ProgTP_IncidentOperationRequest op_request = {0};
+        if (body.len == 0 ||
+            !ProgTP_IncidentOperationRequestFromJson(body.buf, body.len, &op_request, error, sizeof(error))) {
+            ProgTP_IncidentStoreDestroy(&store);
+            SendText(request, 400, error[0] ? error : "invalid incident operation request");
+            return;
+        }
+        ProgTP_IncidentOperationResponse op_response = {0};
+        bool ok = false;
+        switch (op_request.operation) {
+            case PROGTP_INCIDENT_OP_CREATE: {
+                ProgTP_Incident incident = op_request.incident;
+                incident.number = 0;
+                ok = ProgTP_IncidentStoreAppend(&store, &incident, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error));
+                if (ok) {
+                    op_response.success = true;
+                    op_response.incident_number = store.items[store.length - 1u].number;
+                    snprintf(op_response.message, sizeof(op_response.message), "Incident #%u created", op_response.incident_number);
+                }
+                break;
+            }
+            case PROGTP_INCIDENT_OP_UPDATE:
+                ok = ProgTP_IncidentStoreUpdate(&store, op_request.incident.number, &op_request.incident, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error));
+                if (ok) {
+                    op_response.success = true;
+                    op_response.incident_number = op_request.incident.number;
+                    snprintf(op_response.message, sizeof(op_response.message), "Incident #%u updated", op_response.incident_number);
+                }
+                break;
+            case PROGTP_INCIDENT_OP_DELETE:
+                ok = ProgTP_IncidentStoreDelete(&store, op_request.incident.number, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error));
+                if (ok) {
+                    op_response.success = true;
+                    op_response.incident_number = op_request.incident.number;
+                    snprintf(op_response.message, sizeof(op_response.message), "Incident #%u deleted", op_response.incident_number);
+                }
+                break;
+            case PROGTP_INCIDENT_OP_IMPORT_LOG: {
+                const char *log_path = op_request.log_path[0] != '\0' ? op_request.log_path : PROGTP_SERVER_MONITORING_LOG_PATH;
+                uint32_t created_count = 0;
+                ok = ProgTP_IncidentStoreImportFromMonitoringLog(&store, log_path, PROGTP_SERVER_INCIDENT_PATH, &created_count, error, sizeof(error));
+                if (ok) {
+                    op_response.success = true;
+                    op_response.created_count = created_count;
+                    snprintf(op_response.message, sizeof(op_response.message), "Imported %u incidents from log", created_count);
+                }
+                break;
+            }
+        }
+        ProgTP_IncidentStoreDestroy(&store);
+        if (!ok) {
+            SendText(request, 500, error);
+            return;
+        }
+        size_t json_length = 0;
+        char *json = ProgTP_IncidentOperationResponseToJson(&op_response, &json_length);
+        if (!json) {
+            fio_http_send_error_response(request, 500);
+            return;
+        }
+        SendJson(request, 200, json, json_length);
+        return;
+    }
+
+    ProgTP_IncidentStoreDestroy(&store);
+    SendText(request, 405, "method not allowed\n");
+}
+
 static void OnStaticMiss(fio_http_s *request) {
     SendText(request, 404, "ProgTP server. Try /api/inventory, /api/sensors, /api/connectivity/run, /api/hello, or /index.html\n");
 }
@@ -331,6 +434,14 @@ int main(int argc, char **argv) {
             .on_http = OnApiSensorsImport,
             .public_folder = FIO_STR_INFO2("", 0)) != 0) {
         fprintf(stderr, "failed to register /api/sensors/import route\n");
+        return 1;
+    }
+    if (fio_http_route(
+            listener,
+            "/api/incidents",
+            .on_http = OnApiIncidents,
+            .public_folder = FIO_STR_INFO2("", 0)) != 0) {
+        fprintf(stderr, "failed to register /api/incidents route\n");
         return 1;
     }
 

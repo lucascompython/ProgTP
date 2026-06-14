@@ -107,6 +107,7 @@ Current overlays:
 ## TODO:
 
 - [ ] make the cursor look "clickable" on web and mobile
+- [ ] fix corrupted chars in the preview of the module 4
 - [ ] add a nice way to see reports in the app itself
 - [ ] add cli --help usage info
 - [ ] add docs for usage, and docs for features of each module

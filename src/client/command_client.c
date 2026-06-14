@@ -251,3 +251,111 @@ bool ProgTP_RunLocalSensorImport(
         error,
         error_size);
 }
+
+bool ProgTP_LoadRemoteIncidents(const char *remote_url, ProgTP_IncidentStore *store, char *error, size_t error_size) {
+    char endpoint[512];
+    BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/incidents");
+
+    ResponseBuffer response = {0};
+    if (!PerformHttpRequest(endpoint, "GET", NULL, 0, &response, error, error_size)) {
+        return false;
+    }
+
+    bool parsed = ProgTP_IncidentStoreFromJson(response.data, response.length, store, error, error_size);
+    free(response.data);
+    if (!parsed && error_size > 0 && error[0] == '\0') {
+        snprintf(error, error_size, "server returned invalid incident JSON");
+    }
+    return parsed;
+}
+
+bool ProgTP_RunRemoteIncidentOperation(
+    const char *remote_url,
+    const ProgTP_IncidentOperationRequest *request,
+    ProgTP_IncidentOperationResponse *response,
+    char *error,
+    size_t error_size) {
+    size_t json_length = 0;
+    char *json = ProgTP_IncidentOperationRequestToJson(request, &json_length);
+    if (!json) {
+        snprintf(error, error_size, "failed to serialize incident operation request");
+        return false;
+    }
+    char endpoint[512];
+    BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/incidents");
+    ResponseBuffer response_buffer = {0};
+    bool requested = PerformHttpRequest(endpoint, "POST", json, json_length, &response_buffer, error, error_size);
+    free(json);
+    if (!requested) {
+        return false;
+    }
+    bool parsed = ProgTP_IncidentOperationResponseFromJson(
+        response_buffer.data,
+        response_buffer.length,
+        response,
+        error,
+        error_size);
+    free(response_buffer.data);
+    if (!parsed && error_size > 0 && error[0] == '\0') {
+        snprintf(error, error_size, "server returned invalid incident operation JSON");
+    }
+    return parsed;
+}
+
+bool ProgTP_RunLocalIncidentOperation(
+    ProgTP_IncidentStore *store,
+    const ProgTP_IncidentOperationRequest *request,
+    ProgTP_IncidentOperationResponse *response,
+    char *error,
+    size_t error_size) {
+    if (!store || !request || !response) {
+        snprintf(error, error_size, "missing incident operation parameters");
+        return false;
+    }
+    memset(response, 0, sizeof(*response));
+    const char *incident_path = "incidentes.dat";
+    switch (request->operation) {
+        case PROGTP_INCIDENT_OP_CREATE: {
+            ProgTP_Incident incident = request->incident;
+            incident.number = 0;
+            if (!ProgTP_IncidentStoreAppend(store, &incident, incident_path, error, error_size)) {
+                return false;
+            }
+            response->success = true;
+            response->incident_number = store->items[store->length - 1u].number;
+            snprintf(response->message, sizeof(response->message), "Incident #%u created", response->incident_number);
+            return true;
+        }
+        case PROGTP_INCIDENT_OP_UPDATE: {
+            if (!ProgTP_IncidentStoreUpdate(store, request->incident.number, &request->incident, incident_path, error, error_size)) {
+                return false;
+            }
+            response->success = true;
+            response->incident_number = request->incident.number;
+            snprintf(response->message, sizeof(response->message), "Incident #%u updated", response->incident_number);
+            return true;
+        }
+        case PROGTP_INCIDENT_OP_DELETE: {
+            if (!ProgTP_IncidentStoreDelete(store, request->incident.number, incident_path, error, error_size)) {
+                return false;
+            }
+            response->success = true;
+            response->incident_number = request->incident.number;
+            snprintf(response->message, sizeof(response->message), "Incident #%u deleted", response->incident_number);
+            return true;
+        }
+        case PROGTP_INCIDENT_OP_IMPORT_LOG: {
+            const char *log_path = request->log_path[0] != '\0' ? request->log_path : "log_monitorizacao.txt";
+            uint32_t created_count = 0;
+            if (!ProgTP_IncidentStoreImportFromMonitoringLog(store, log_path, incident_path, &created_count, error, error_size)) {
+                return false;
+            }
+            response->success = true;
+            response->created_count = created_count;
+            snprintf(response->message, sizeof(response->message), "Imported %u incidents from log", created_count);
+            return true;
+        }
+    }
+    snprintf(error, error_size, "unknown incident operation");
+    return false;
+}

@@ -78,7 +78,7 @@ clay_sp = subproject('clay')
 clay_dep = clay_sp.get_variable('clay_dep').as_system('system')
 clay_root = clay_sp.get_variable('clay_root')
 
-common_sources = files('src/app/app.c', 'src/app/app_ui.c', 'src/app/app_placeholder.c', 'src/app/app_inventory.c', 'src/app/app_connectivity.c', 'src/app/app_sensors.c', 'src/app/app_modal.c')
+common_sources = files('src/app/app.c', 'src/app/app_ui.c', 'src/app/app_placeholder.c', 'src/app/app_inventory.c', 'src/app/app_connectivity.c', 'src/app/app_sensors.c', 'src/app/app_modal.c', 'src/app/app_incidents.c')
 common_deps = [clay_dep]
 platform_targets = []
 support_sources = files(
@@ -326,6 +326,7 @@ if web_cc.found()
             'src/app/app_connectivity.c',
             'src/app/app_sensors.c',
             'src/app/app_modal.c',
+            'src/app/app_incidents.c',
             'src/common/progtp_error.c',
             'src/common/progtp_text.c',
             'src/common/progtp_time.c',
@@ -348,7 +349,7 @@ if web_cc.found()
             '-sMODULARIZE=1',
             '-sEXPORT_NAME=createProgTPModule',
             '-sENVIRONMENT=web',
-            '-sEXPORTED_FUNCTIONS=["_InitializeClay","_UpdateDrawFrame","_GetCommandLabelBuffer","_GetCommandLabelCapacity","_GetRenderCommandsBuffer","_GetInventoryJsonBuffer","_GetInventoryJsonCapacity","_ImportInventoryJson","_ImportSensorsJson","_ExportInventoryJson","_IsInventoryDirty","_GetInventoryVersion","_MarkInventoryClean","_ExportConnectivityRequestJson","_ImportConnectivityResultJson","_FailConnectivityRequest","_TakeSensorImportRequest","_ImportSensorImportResultJson","_FailSensorImport"]',
+            '-sEXPORTED_FUNCTIONS=["_InitializeClay","_UpdateDrawFrame","_GetCommandLabelBuffer","_GetCommandLabelCapacity","_GetRenderCommandsBuffer","_GetInventoryJsonBuffer","_GetInventoryJsonCapacity","_ImportInventoryJson","_ImportSensorsJson","_ExportInventoryJson","_IsInventoryDirty","_GetInventoryVersion","_MarkInventoryClean","_ExportConnectivityRequestJson","_ImportConnectivityResultJson","_FailConnectivityRequest","_TakeSensorImportRequest","_ImportSensorImportResultJson","_FailSensorImport","_ImportIncidentsJson","_ExportIncidentsJson","_TakeIncidentOperationRequest","_ExportIncidentOperationRequestJson","_ImportIncidentOperationResponseJson","_FailIncidentOperation"]',
             '-sEXPORTED_RUNTIME_METHODS=["HEAPU8"]',
             '-sFILESYSTEM=0',
             '-sINITIAL_MEMORY=67108864',
@@ -386,6 +387,7 @@ if web_cc.found()
             '@INPUT13@',
             '@INPUT14@',
             '@INPUT15@',
+            '@INPUT16@',
             meson.current_source_dir() / 'subprojects/yyjson/src/yyjson.c',
         ],
         env: web_env,

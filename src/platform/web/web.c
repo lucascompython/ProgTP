@@ -265,3 +265,93 @@ PROGTP_WEB_EXPORT void FailSensorImport(uint32_t message_length) {
     progtp_web_json[message_length] = '\0';
     ProgTP_AppFailSensorImport(&progtp_web_app_state, progtp_web_json);
 }
+
+PROGTP_WEB_EXPORT bool ImportIncidentsJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppSetStatus(&progtp_web_app_state, "HTTP incident data is too large");
+        return false;
+    }
+    ProgTP_IncidentStore store;
+    ProgTP_IncidentStoreInit(&store);
+    char error[256] = {0};
+    bool ok = ProgTP_IncidentStoreFromJson(progtp_web_json, json_length, &store, error, sizeof(error));
+    if (ok) {
+        ProgTP_AppUseLoadedIncidents(&progtp_web_app_state, &store, "Loaded incidents from HTTP server");
+    } else {
+        ProgTP_AppSetStatus(&progtp_web_app_state, error[0] ? error : "Invalid HTTP incident JSON");
+    }
+    ProgTP_IncidentStoreDestroy(&store);
+    return ok;
+}
+
+PROGTP_WEB_EXPORT uint32_t ExportIncidentsJson(void) {
+    EnsureWebAppInitialized();
+    size_t json_length = 0;
+    char *json = ProgTP_IncidentStoreToJson(&progtp_web_app_state.incidents, &json_length);
+    if (!json) {
+        ProgTP_AppSetStatus(&progtp_web_app_state, "Could not serialize incidents");
+        return 0;
+    }
+    if (json_length + 1u > PROGTP_WEB_JSON_CAPACITY) {
+        free(json);
+        ProgTP_AppSetStatus(&progtp_web_app_state, "Incident JSON buffer is too small");
+        return 0;
+    }
+    memcpy(progtp_web_json, json, json_length);
+    progtp_web_json[json_length] = '\0';
+    free(json);
+    return (uint32_t)json_length;
+}
+
+PROGTP_WEB_EXPORT bool TakeIncidentOperationRequest(void) {
+    EnsureWebAppInitialized();
+    ProgTP_IncidentOperationRequest request;
+    return ProgTP_AppTakeIncidentOperationRequest(&progtp_web_app_state, &request);
+}
+
+PROGTP_WEB_EXPORT uint32_t ExportIncidentOperationRequestJson(void) {
+    EnsureWebAppInitialized();
+    ProgTP_IncidentOperationRequest request;
+    if (!ProgTP_AppTakeIncidentOperationRequest(&progtp_web_app_state, &request)) {
+        return 0;
+    }
+    size_t json_length = 0;
+    char *json = ProgTP_IncidentOperationRequestToJson(&request, &json_length);
+    if (!json || json_length + 1u > PROGTP_WEB_JSON_CAPACITY) {
+        free(json);
+        ProgTP_AppFailIncidentOperation(&progtp_web_app_state, "Could not serialize incident operation request");
+        return 0;
+    }
+    memcpy(progtp_web_json, json, json_length);
+    progtp_web_json[json_length] = '\0';
+    free(json);
+    return (uint32_t)json_length;
+}
+
+PROGTP_WEB_EXPORT bool ImportIncidentOperationResponseJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppFailIncidentOperation(&progtp_web_app_state, "Incident operation response is too large");
+        return false;
+    }
+    ProgTP_IncidentOperationResponse response;
+    char error[256] = {0};
+    if (!ProgTP_IncidentOperationResponseFromJson(progtp_web_json, json_length, &response, error, sizeof(error))) {
+        ProgTP_AppFailIncidentOperation(
+            &progtp_web_app_state,
+            error[0] ? error : "Invalid incident operation response");
+        return false;
+    }
+    ProgTP_AppCompleteIncidentOperation(&progtp_web_app_state, &response);
+    return true;
+}
+
+PROGTP_WEB_EXPORT void FailIncidentOperation(uint32_t message_length) {
+    EnsureWebAppInitialized();
+    if (message_length >= PROGTP_WEB_JSON_CAPACITY) {
+        message_length = PROGTP_WEB_JSON_CAPACITY - 1u;
+    }
+    progtp_web_json[message_length] = '\0';
+    ProgTP_AppFailIncidentOperation(&progtp_web_app_state, progtp_web_json);
+}

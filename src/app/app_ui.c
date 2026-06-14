@@ -18,6 +18,23 @@ static void HandleUiInteraction(Clay_ElementId element_id, Clay_PointerData poin
         return;
     }
     uintptr_t value = (uintptr_t)user_data;
+    if (value >= PROGTP_UI_INCIDENT_FORM_FIELD_BASE) {
+        ProgTP_AppIncidentFormField field = (ProgTP_AppIncidentFormField)(value - PROGTP_UI_INCIDENT_FORM_FIELD_BASE);
+        if (field >= 0 && field < PROGTP_APP_INCIDENT_FORM_FIELD_COUNT) {
+            progtp_interaction_state->incident_form_field = field;
+        }
+        return;
+    }
+    if (value >= PROGTP_UI_INCIDENT_SELECT_BASE) {
+        uint32_t incident_number = (uint32_t)(value - PROGTP_UI_INCIDENT_SELECT_BASE);
+        for (size_t i = 0; i < progtp_interaction_state->incidents.length; ++i) {
+            if (progtp_interaction_state->incidents.items[i].number == incident_number) {
+                progtp_interaction_state->selected_incident_index = i;
+                break;
+            }
+        }
+        return;
+    }
     if (value >= PROGTP_UI_FORM_STATE_BASE) {
         uint32_t state_value = (uint32_t)(value - PROGTP_UI_FORM_STATE_BASE);
         if (state_value <= (uint32_t)PROGTP_EQUIPMENT_DISABLED) {

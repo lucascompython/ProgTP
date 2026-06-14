@@ -80,6 +80,21 @@
     const PROGTP_APP_ACTION_FORM_NEXT_FIELD = 30;
     const PROGTP_APP_ACTION_FORM_PREVIOUS_FIELD = 31;
     const PROGTP_APP_ACTION_SENSOR_IMPORT = 55;
+    const PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE = 63;
+    const PROGTP_APP_ACTION_INCIDENT_PREVIOUS = 64;
+    const PROGTP_APP_ACTION_INCIDENT_NEXT = 65;
+    const PROGTP_APP_ACTION_INCIDENT_PAGE_PREVIOUS = 66;
+    const PROGTP_APP_ACTION_INCIDENT_PAGE_NEXT = 67;
+    const PROGTP_APP_ACTION_INCIDENT_FILTER_ALL = 68;
+    const PROGTP_APP_ACTION_INCIDENT_FILTER_PENDING = 69;
+    const PROGTP_APP_ACTION_INCIDENT_FILTER_IN_PROGRESS = 70;
+    const PROGTP_APP_ACTION_INCIDENT_FILTER_COMPLETED = 71;
+    const PROGTP_APP_ACTION_INCIDENT_ADD = 72;
+    const PROGTP_APP_ACTION_INCIDENT_EDIT = 73;
+    const PROGTP_APP_ACTION_INCIDENT_DELETE = 74;
+    const PROGTP_APP_ACTION_INCIDENT_START = 75;
+    const PROGTP_APP_ACTION_INCIDENT_COMPLETE = 76;
+    const PROGTP_APP_ACTION_INCIDENT_AUTO_IMPORT = 77;
     const GLOBAL_FONT_SCALING_FACTOR = 0.8;
     let renderCommandSize = 0;
     let scratchSpaceAddress = 0;
@@ -93,6 +108,7 @@
     let saveInFlight = false;
     let connectivityInFlight = false;
     let sensorImportInFlight = false;
+    let incidentOperationInFlight = false;
     let lastSaveAttemptVersion = 0;
     let fontsById = [
         "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
@@ -443,6 +459,7 @@
             if (resultLength === 0 || !instance.exports.ImportConnectivityResultJson(resultLength)) {
                 throw new Error("Could not import connectivity result");
             }
+            loadIncidents();
             setSharedLabel("Mode: connected to server | commands run on server PC");
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -472,6 +489,7 @@
             if (length === 0 || !instance.exports.ImportSensorImportResultJson(length)) {
                 throw new Error("Could not import sensor result");
             }
+            loadIncidents();
             setSharedLabel("Mode: connected to server | sensor files stored on server PC");
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -479,6 +497,58 @@
             instance.exports.FailSensorImport(messageLength);
         } finally {
             sensorImportInFlight = false;
+        }
+    }
+
+    async function loadIncidents() {
+        try {
+            const response = await fetch("/api/incidents", { cache: "no-store" });
+            if (!response.ok) {
+                return;
+            }
+            const jsonText = await response.text();
+            const length = writeSharedJson(jsonText);
+            if (length > 0) {
+                instance.exports.ImportIncidentsJson(length);
+            }
+        } catch {
+        }
+    }
+
+    async function runIncidentOperationIfRequested() {
+        if (incidentOperationInFlight || !instance.exports.TakeIncidentOperationRequest()) {
+            return;
+        }
+        incidentOperationInFlight = true;
+        try {
+            const requestLength = instance.exports.ExportIncidentOperationRequestJson();
+            if (requestLength === 0) {
+                throw new Error("Could not export incident operation request");
+            }
+            const buffer = instance.exports.GetInventoryJsonBuffer();
+            const requestJson = textDecoder.decode(
+                new Uint8Array(instance.exports.memory.buffer, buffer, requestLength));
+            const response = await fetch("/api/incidents", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: requestJson,
+            });
+            const responseText = await response.text();
+            if (!response.ok) {
+                throw new Error(responseText || `HTTP ${response.status}`);
+            }
+            const length = writeSharedJson(responseText);
+            if (length === 0 || !instance.exports.ImportIncidentOperationResponseJson(length)) {
+                throw new Error("Could not import incident operation response");
+            }
+            await loadIncidents();
+            setSharedLabel("Mode: connected to server | incident files stored on server PC");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const messageLength = writeSharedJson(message);
+            instance.exports.FailIncidentOperation(messageLength);
+        } finally {
+            incidentOperationInFlight = false;
         }
     }
 
@@ -550,6 +620,11 @@
                 m: PROGTP_APP_ACTION_SEARCH_MAC,
                 w: PROGTP_APP_ACTION_SAVE,
                 l: PROGTP_APP_ACTION_LOAD,
+                d: PROGTP_APP_ACTION_INCIDENT_DELETE,
+                e: PROGTP_APP_ACTION_INCIDENT_EDIT,
+                s: PROGTP_APP_ACTION_INCIDENT_START,
+                t: PROGTP_APP_ACTION_INCIDENT_AUTO_IMPORT,
+                q: PROGTP_APP_ACTION_INCIDENT_ADD,
             };
             if (event.key === "Backspace") {
                 pendingInputEvents.push({ action: PROGTP_APP_ACTION_INPUT_BACKSPACE, codepoint: 0 });
@@ -603,6 +678,12 @@
                 TakeSensorImportRequest: module._TakeSensorImportRequest,
                 ImportSensorImportResultJson: module._ImportSensorImportResultJson,
                 FailSensorImport: module._FailSensorImport,
+                ImportIncidentsJson: module._ImportIncidentsJson,
+                ExportIncidentsJson: module._ExportIncidentsJson,
+                TakeIncidentOperationRequest: module._TakeIncidentOperationRequest,
+                ExportIncidentOperationRequestJson: module._ExportIncidentOperationRequestJson,
+                ImportIncidentOperationResponseJson: module._ImportIncidentOperationResponseJson,
+                FailIncidentOperation: module._FailIncidentOperation,
                 InitializeClay: module._InitializeClay,
                 UpdateDrawFrame: module._UpdateDrawFrame,
             },
@@ -617,6 +698,7 @@
         previousFrameTime = performance.now();
         await loadInventory();
         loadSensors();
+        loadIncidents();
         loadCommandLabel();
         renderLoop(performance.now());
     }
@@ -797,6 +879,7 @@
             saveInventoryIfDirty();
             runConnectivityIfRequested();
             runSensorImportIfRequested();
+            runIncidentOperationIfRequested();
             requestAnimationFrame(renderLoop);
             window.mouseDown = false;
         } catch (error) {

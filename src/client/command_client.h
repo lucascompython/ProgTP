@@ -36,5 +36,18 @@ bool ProgTP_RunLocalSensorImport(
     const char *input_path,
     char *error,
     size_t error_size);
+bool ProgTP_LoadRemoteIncidents(const char *remote_url, ProgTP_IncidentStore *store, char *error, size_t error_size);
+bool ProgTP_RunRemoteIncidentOperation(
+    const char *remote_url,
+    const ProgTP_IncidentOperationRequest *request,
+    ProgTP_IncidentOperationResponse *response,
+    char *error,
+    size_t error_size);
+bool ProgTP_RunLocalIncidentOperation(
+    ProgTP_IncidentStore *store,
+    const ProgTP_IncidentOperationRequest *request,
+    ProgTP_IncidentOperationResponse *response,
+    char *error,
+    size_t error_size);
 
 #endif

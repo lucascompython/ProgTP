@@ -8,6 +8,8 @@
 #define PROGTP_UI_MODULE_BASE 100u
 #define PROGTP_UI_SELECT_BASE 1000u
 #define PROGTP_UI_SENSOR_SELECT_BASE 2000u
+#define PROGTP_UI_INCIDENT_SELECT_BASE 5000u
+#define PROGTP_UI_INCIDENT_FORM_FIELD_BASE 6000u
 #define PROGTP_UI_FORM_FIELD_BASE 3000u
 #define PROGTP_UI_FORM_STATE_BASE 4000u
 #define PROGTP_VISIBLE_ROWS 12u
@@ -83,6 +85,16 @@ void ConnectivityModule(ProgTP_AppState *state);
 
 void PrepareSensorText(ProgTP_AppState *state);
 void SensorModule(ProgTP_AppState *state);
+
+void PrepareIncidentText(ProgTP_AppState *state);
+void MoveIncidentSelection(ProgTP_AppState *state, int direction);
+void PageIncidents(ProgTP_AppState *state, int direction);
+void IncidentModule(ProgTP_AppState *state);
+void OpenAddIncidentModal(ProgTP_AppState *state);
+void OpenUpdateIncidentModal(ProgTP_AppState *state);
+void OpenRemoveIncidentModal(ProgTP_AppState *state);
+void SubmitIncidentForm(ProgTP_AppState *state);
+void ConfirmRemoveIncident(ProgTP_AppState *state);
 
 int32_t CStringLength(const char *value);
 Clay_String StringFromCString(const char *value);

@@ -2,8 +2,10 @@
 #include "app_internal.h"
 
 #include "progtp_text.h"
+#include "progtp_time.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static ProgTP_Equipment *SelectedEquipment(ProgTP_AppState *state) {
@@ -208,6 +210,56 @@ bool HandleModalAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             }
             case PROGTP_APP_ACTION_INPUT_SUBMIT:
             case PROGTP_APP_ACTION_FORM_SUBMIT: SubmitSensorFile(state); return true;
+            case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
+            default: return true;
+        }
+    }
+    if (state->modal == PROGTP_APP_MODAL_ADD_INCIDENT || state->modal == PROGTP_APP_MODAL_UPDATE_INCIDENT) {
+        switch (action) {
+            case PROGTP_APP_ACTION_INPUT_BACKSPACE: {
+                char *buffer = NULL;
+                size_t buffer_size = 0;
+                switch (state->incident_form_field) {
+                    case PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE: buffer = state->incident_form_equipment_code; buffer_size = sizeof(state->incident_form_equipment_code); break;
+                    case PROGTP_APP_INCIDENT_FORM_SOURCE: buffer = state->incident_form_source; buffer_size = sizeof(state->incident_form_source); break;
+                    case PROGTP_APP_INCIDENT_FORM_TYPE: buffer = state->incident_form_type; buffer_size = sizeof(state->incident_form_type); break;
+                    case PROGTP_APP_INCIDENT_FORM_DESCRIPTION: buffer = state->incident_form_description; buffer_size = sizeof(state->incident_form_description); break;
+                    case PROGTP_APP_INCIDENT_FORM_PRIORITY: buffer = state->incident_form_priority; buffer_size = sizeof(state->incident_form_priority); break;
+                    case PROGTP_APP_INCIDENT_FORM_TECHNICIAN: buffer = state->incident_form_technician; buffer_size = sizeof(state->incident_form_technician); break;
+                    case PROGTP_APP_INCIDENT_FORM_FIELD_COUNT: break;
+                }
+                if (buffer && buffer_size > 0) {
+                    size_t len = strlen(buffer);
+                    if (len > 0) {
+                        buffer[len - 1u] = '\0';
+                    }
+                }
+                return true;
+            }
+            case PROGTP_APP_ACTION_INPUT_SUBMIT:
+            case PROGTP_APP_ACTION_FORM_SUBMIT: SubmitIncidentForm(state); return true;
+            case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
+            case PROGTP_APP_ACTION_FORM_NEXT_FIELD:
+                state->incident_form_field = (ProgTP_AppIncidentFormField)(((int)state->incident_form_field + 1) % PROGTP_APP_INCIDENT_FORM_FIELD_COUNT);
+                return true;
+            case PROGTP_APP_ACTION_FORM_PREVIOUS_FIELD:
+                state->incident_form_field = state->incident_form_field == PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE
+                    ? (ProgTP_AppIncidentFormField)(PROGTP_APP_INCIDENT_FORM_FIELD_COUNT - 1)
+                    : (ProgTP_AppIncidentFormField)((int)state->incident_form_field - 1);
+                return true;
+            case PROGTP_APP_ACTION_INCIDENT_PRIORITY_LOW:
+                snprintf(state->incident_form_priority, sizeof(state->incident_form_priority), "%s", "Low"); return true;
+            case PROGTP_APP_ACTION_INCIDENT_PRIORITY_MEDIUM:
+                snprintf(state->incident_form_priority, sizeof(state->incident_form_priority), "%s", "Medium"); return true;
+            case PROGTP_APP_ACTION_INCIDENT_PRIORITY_HIGH:
+                snprintf(state->incident_form_priority, sizeof(state->incident_form_priority), "%s", "High"); return true;
+            default: return true;
+        }
+    }
+    if (state->modal == PROGTP_APP_MODAL_REMOVE_INCIDENT) {
+        switch (action) {
+            case PROGTP_APP_ACTION_INPUT_SUBMIT:
+            case PROGTP_APP_ACTION_FORM_SUBMIT: ConfirmRemoveIncident(state); return true;
             case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
             default: return true;
         }
@@ -449,6 +501,310 @@ static void RemoveConfirmModal(ProgTP_AppState *state) {
     }
 }
 
+void OpenAddIncidentModal(ProgTP_AppState *state) {
+    state->modal = PROGTP_APP_MODAL_ADD_INCIDENT;
+    state->input_mode = PROGTP_APP_INPUT_NONE;
+    state->incident_form_field = PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE;
+    state->incident_form_equipment_code[0] = '\0';
+    state->incident_form_source[0] = '\0';
+    state->incident_form_type[0] = '\0';
+    state->incident_form_description[0] = '\0';
+    snprintf(state->incident_form_priority, sizeof(state->incident_form_priority), "%s", "Medium");
+    state->incident_form_technician[0] = '\0';
+    if (state->selected_code > 0) {
+        snprintf(state->incident_form_equipment_code, sizeof(state->incident_form_equipment_code), "%u", state->selected_code);
+    }
+}
+
+void OpenUpdateIncidentModal(ProgTP_AppState *state) {
+    if (state->incidents.length == 0 || state->selected_incident_index >= state->incidents.length) {
+        SetStatus(state, "No incident selected");
+        return;
+    }
+    state->modal = PROGTP_APP_MODAL_UPDATE_INCIDENT;
+    state->input_mode = PROGTP_APP_INPUT_NONE;
+    state->incident_form_field = PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE;
+    const ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+    snprintf(state->incident_form_equipment_code, sizeof(state->incident_form_equipment_code), "%u", incident->equipment_code);
+    snprintf(state->incident_form_source, sizeof(state->incident_form_source), "%s", incident->source);
+    snprintf(state->incident_form_type, sizeof(state->incident_form_type), "%s", incident->type);
+    snprintf(state->incident_form_description, sizeof(state->incident_form_description), "%s", incident->description);
+    snprintf(state->incident_form_priority, sizeof(state->incident_form_priority), "%s", incident->priority);
+    snprintf(state->incident_form_technician, sizeof(state->incident_form_technician), "%s", incident->technician);
+}
+
+void OpenRemoveIncidentModal(ProgTP_AppState *state) {
+    if (state->incidents.length == 0 || state->selected_incident_index >= state->incidents.length) {
+        SetStatus(state, "No incident selected");
+        return;
+    }
+    state->modal = PROGTP_APP_MODAL_REMOVE_INCIDENT;
+    state->input_mode = PROGTP_APP_INPUT_NONE;
+    const ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+    snprintf(state->modal_message, sizeof(state->modal_message), "Remove incident #%u?", incident->number);
+}
+
+void SubmitIncidentForm(ProgTP_AppState *state) {
+    ProgTP_Incident incident = {0};
+    incident.equipment_code = (uint32_t)strtoul(state->incident_form_equipment_code, NULL, 10);
+    snprintf(incident.source, sizeof(incident.source), "%s", state->incident_form_source);
+    snprintf(incident.type, sizeof(incident.type), "%s", state->incident_form_type);
+    snprintf(incident.description, sizeof(incident.description), "%s", state->incident_form_description);
+    snprintf(incident.priority, sizeof(incident.priority), "%s", state->incident_form_priority);
+    snprintf(incident.technician, sizeof(incident.technician), "%s", state->incident_form_technician);
+    incident.state = PROGTP_INCIDENT_PENDING;
+    ProgTP_FormatCurrentTimestamp(incident.created_at, sizeof(incident.created_at));
+
+    if (state->modal == PROGTP_APP_MODAL_UPDATE_INCIDENT &&
+        state->selected_incident_index < state->incidents.length) {
+        incident.number = state->incidents.items[state->selected_incident_index].number;
+        incident.state = state->incidents.items[state->selected_incident_index].state;
+        snprintf(incident.created_at, sizeof(incident.created_at), "%s", state->incidents.items[state->selected_incident_index].created_at);
+        snprintf(incident.completed_at, sizeof(incident.completed_at), "%s", state->incidents.items[state->selected_incident_index].completed_at);
+        state->incidents.items[state->selected_incident_index] = incident;
+        char save_error[128] = {0};
+        if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+            SetStatus(state, "Incident updated");
+        } else {
+            SetStatus(state, save_error);
+        }
+    } else {
+        incident.number = state->incidents.length > 0 ? state->incidents.items[state->incidents.length - 1u].number + 1u : 1u;
+        if (state->incidents.capacity < state->incidents.length + 1u) {
+            size_t capacity = state->incidents.capacity == 0 ? 16u : state->incidents.capacity * 2u;
+            ProgTP_Incident *items = realloc(state->incidents.items, capacity * sizeof(*items));
+            if (items) {
+                state->incidents.items = items;
+                state->incidents.capacity = capacity;
+            }
+        }
+        state->incidents.items[state->incidents.length++] = incident;
+        state->selected_incident_index = state->incidents.length - 1u;
+        char save_error[128] = {0};
+        if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+            SetStatus(state, "Incident created");
+        } else {
+            SetStatus(state, save_error);
+        }
+    }
+    CloseModal(state);
+}
+
+void ConfirmRemoveIncident(ProgTP_AppState *state) {
+    if (state->selected_incident_index < state->incidents.length) {
+        memmove(
+            &state->incidents.items[state->selected_incident_index],
+            &state->incidents.items[state->selected_incident_index + 1u],
+            (state->incidents.length - state->selected_incident_index - 1u) * sizeof(state->incidents.items[0]));
+        --state->incidents.length;
+        if (state->selected_incident_index >= state->incidents.length && state->incidents.length > 0) {
+            state->selected_incident_index = state->incidents.length - 1u;
+        }
+        char save_error[128] = {0};
+        if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+            SetStatus(state, "Incident removed");
+        } else {
+            SetStatus(state, save_error);
+        }
+    }
+    CloseModal(state);
+}
+
+static void IncidentFormModal(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("IncidentFormModal"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = { CLAY_SIZING_GROW(.min = 400.0f, .max = 600.0f), CLAY_SIZING_FIT(0) },
+            .padding = CLAY_PADDING_ALL(18),
+            .childGap = 14,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(8),
+    }) {
+        TextLine(state->modal == PROGTP_APP_MODAL_ADD_INCIDENT ? "New incident" : "Edit incident", 21, COLOR_TEXT);
+        if (state->status[0] != '\0') {
+            TextLine(state->status, 13, COLOR_MUTED);
+        }
+        CLAY(CLAY_ID("IncidentFormFields"), {
+            .layout = {
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 8,
+            },
+        }) {
+            TextLine("Equipment code", 12, COLOR_MUTED);
+            CLAY(CLAY_ID("IncidentFormEquipmentCode"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight()) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = COLOR_WHITE,
+                .border = {
+                    .color = state->incident_form_field == PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE ? COLOR_ACCENT : COLOR_LINE,
+                    .width = {
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        0,
+                    },
+                },
+                .cornerRadius = CLAY_CORNER_RADIUS(5),
+            }) {
+                AttachInteraction(PROGTP_UI_INCIDENT_FORM_FIELD_BASE + PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE);
+                TextLine(state->incident_form_equipment_code, 13, COLOR_TEXT);
+            }
+            TextLine("Source", 12, COLOR_MUTED);
+            CLAY(CLAY_ID("IncidentFormSource"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight()) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = COLOR_WHITE,
+                .border = {
+                    .color = state->incident_form_field == PROGTP_APP_INCIDENT_FORM_SOURCE ? COLOR_ACCENT : COLOR_LINE,
+                    .width = {
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        0,
+                    },
+                },
+                .cornerRadius = CLAY_CORNER_RADIUS(5),
+            }) {
+                AttachInteraction(PROGTP_UI_INCIDENT_FORM_FIELD_BASE + PROGTP_APP_INCIDENT_FORM_SOURCE);
+                TextLine(state->incident_form_source, 13, COLOR_TEXT);
+            }
+            TextLine("Type", 12, COLOR_MUTED);
+            CLAY(CLAY_ID("IncidentFormType"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight()) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = COLOR_WHITE,
+                .border = {
+                    .color = state->incident_form_field == PROGTP_APP_INCIDENT_FORM_TYPE ? COLOR_ACCENT : COLOR_LINE,
+                    .width = {
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        0,
+                    },
+                },
+                .cornerRadius = CLAY_CORNER_RADIUS(5),
+            }) {
+                AttachInteraction(PROGTP_UI_INCIDENT_FORM_FIELD_BASE + PROGTP_APP_INCIDENT_FORM_TYPE);
+                TextLine(state->incident_form_type, 13, COLOR_TEXT);
+            }
+            TextLine("Description", 12, COLOR_MUTED);
+            CLAY(CLAY_ID("IncidentFormDescription"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight()) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = COLOR_WHITE,
+                .border = {
+                    .color = state->incident_form_field == PROGTP_APP_INCIDENT_FORM_DESCRIPTION ? COLOR_ACCENT : COLOR_LINE,
+                    .width = {
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        0,
+                    },
+                },
+                .cornerRadius = CLAY_CORNER_RADIUS(5),
+            }) {
+                AttachInteraction(PROGTP_UI_INCIDENT_FORM_FIELD_BASE + PROGTP_APP_INCIDENT_FORM_DESCRIPTION);
+                TextLine(state->incident_form_description, 13, COLOR_TEXT);
+            }
+            TextLine("Priority", 12, COLOR_MUTED);
+            CLAY(CLAY_ID("IncidentFormPriorityButtons"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                    .childGap = 8,
+                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER },
+                },
+            }) {
+                Button(702, "Low", PROGTP_APP_ACTION_INCIDENT_PRIORITY_LOW, strcmp(state->incident_form_priority, "Low") == 0, false);
+                Button(703, "Medium", PROGTP_APP_ACTION_INCIDENT_PRIORITY_MEDIUM, strcmp(state->incident_form_priority, "Medium") == 0, false);
+                Button(704, "High", PROGTP_APP_ACTION_INCIDENT_PRIORITY_HIGH, state->incident_form_priority[0] == '\0' || strcmp(state->incident_form_priority, "High") == 0, false);
+            }
+            TextLine("Technician", 12, COLOR_MUTED);
+            CLAY(CLAY_ID("IncidentFormTechnician"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight()) },
+                    .padding = { 10, 10, 0, 0 },
+                    .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = COLOR_WHITE,
+                .border = {
+                    .color = state->incident_form_field == PROGTP_APP_INCIDENT_FORM_TECHNICIAN ? COLOR_ACCENT : COLOR_LINE,
+                    .width = {
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        state->terminal_rendering ? 0 : 1,
+                        0,
+                    },
+                },
+                .cornerRadius = CLAY_CORNER_RADIUS(5),
+            }) {
+                AttachInteraction(PROGTP_UI_INCIDENT_FORM_FIELD_BASE + PROGTP_APP_INCIDENT_FORM_TECHNICIAN);
+                TextLine(state->incident_form_technician, 13, COLOR_TEXT);
+            }
+        }
+        TextLine("Tab/Enter to navigate fields", 12, COLOR_MUTED);
+        CLAY(CLAY_ID("IncidentFormActions"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 8,
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            Button(700, "Cancel", PROGTP_APP_ACTION_FORM_CANCEL, false, false);
+            Button(701, "Save", PROGTP_APP_ACTION_FORM_SUBMIT, true, false);
+        }
+    }
+}
+
+static void RemoveIncidentConfirmModal(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("RemoveIncidentModal"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = { CLAY_SIZING_GROW(.min = 320.0f, .max = 500.0f), CLAY_SIZING_FIT(0) },
+            .padding = CLAY_PADDING_ALL(18),
+            .childGap = 14,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(8),
+    }) {
+        TextLine("Remove incident", 21, COLOR_TEXT);
+        TextLine(state->modal_message, 14, COLOR_MUTED);
+        if (state->status[0] != '\0') {
+            TextLine(state->status, 13, COLOR_DANGER);
+        }
+        CLAY(CLAY_ID("RemoveIncidentActions"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 8,
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            Button(710, "Cancel", PROGTP_APP_ACTION_FORM_CANCEL, false, false);
+            Button(711, "Remove", PROGTP_APP_ACTION_FORM_SUBMIT, false, true);
+        }
+    }
+}
+
 void ModalOverlay(ProgTP_AppState *state, Clay_Dimensions layout_dimensions) {
     if (state->modal == PROGTP_APP_MODAL_NONE) {
         return;
@@ -470,6 +826,10 @@ void ModalOverlay(ProgTP_AppState *state, Clay_Dimensions layout_dimensions) {
             RemoveConfirmModal(state);
         } else if (state->modal == PROGTP_APP_MODAL_SENSOR_FILE) {
             SensorFileModal(state);
+        } else if (state->modal == PROGTP_APP_MODAL_ADD_INCIDENT || state->modal == PROGTP_APP_MODAL_UPDATE_INCIDENT) {
+            IncidentFormModal(state);
+        } else if (state->modal == PROGTP_APP_MODAL_REMOVE_INCIDENT) {
+            RemoveIncidentConfirmModal(state);
         } else {
             EquipmentFormModal(state);
         }

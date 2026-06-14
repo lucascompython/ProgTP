@@ -3,6 +3,8 @@
 
 #include "connectivity.h"
 #include "equipment_inventory.h"
+#include "incident_store.h"
+#include "protocol.h"
 #include "sensor_store.h"
 
 #include <clay.h>
@@ -75,6 +77,23 @@ typedef enum {
     PROGTP_APP_ACTION_SENSOR_FILTER_ANOMALOUS,
     PROGTP_APP_ACTION_SENSOR_SEARCH_FIELD,
     PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE,
+    PROGTP_APP_ACTION_INCIDENT_PREVIOUS,
+    PROGTP_APP_ACTION_INCIDENT_NEXT,
+    PROGTP_APP_ACTION_INCIDENT_PAGE_PREVIOUS,
+    PROGTP_APP_ACTION_INCIDENT_PAGE_NEXT,
+    PROGTP_APP_ACTION_INCIDENT_FILTER_ALL,
+    PROGTP_APP_ACTION_INCIDENT_FILTER_PENDING,
+    PROGTP_APP_ACTION_INCIDENT_FILTER_IN_PROGRESS,
+    PROGTP_APP_ACTION_INCIDENT_FILTER_COMPLETED,
+    PROGTP_APP_ACTION_INCIDENT_ADD,
+    PROGTP_APP_ACTION_INCIDENT_EDIT,
+    PROGTP_APP_ACTION_INCIDENT_DELETE,
+    PROGTP_APP_ACTION_INCIDENT_START,
+    PROGTP_APP_ACTION_INCIDENT_COMPLETE,
+    PROGTP_APP_ACTION_INCIDENT_AUTO_IMPORT,
+    PROGTP_APP_ACTION_INCIDENT_PRIORITY_LOW,
+    PROGTP_APP_ACTION_INCIDENT_PRIORITY_MEDIUM,
+    PROGTP_APP_ACTION_INCIDENT_PRIORITY_HIGH,
 } ProgTP_AppAction;
 
 typedef enum {
@@ -99,6 +118,9 @@ typedef enum {
     PROGTP_APP_MODAL_UPDATE_EQUIPMENT,
     PROGTP_APP_MODAL_REMOVE_EQUIPMENT,
     PROGTP_APP_MODAL_SENSOR_FILE,
+    PROGTP_APP_MODAL_ADD_INCIDENT,
+    PROGTP_APP_MODAL_UPDATE_INCIDENT,
+    PROGTP_APP_MODAL_REMOVE_INCIDENT,
 } ProgTP_AppModal;
 
 typedef enum {
@@ -111,6 +133,16 @@ typedef enum {
     PROGTP_APP_FORM_LOCATION,
     PROGTP_APP_FORM_FIELD_COUNT,
 } ProgTP_AppFormField;
+
+typedef enum {
+    PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE = 0,
+    PROGTP_APP_INCIDENT_FORM_SOURCE,
+    PROGTP_APP_INCIDENT_FORM_TYPE,
+    PROGTP_APP_INCIDENT_FORM_DESCRIPTION,
+    PROGTP_APP_INCIDENT_FORM_PRIORITY,
+    PROGTP_APP_INCIDENT_FORM_TECHNICIAN,
+    PROGTP_APP_INCIDENT_FORM_FIELD_COUNT,
+} ProgTP_AppIncidentFormField;
 
 typedef struct {
     ProgTP_EquipmentInventory inventory;
@@ -194,6 +226,33 @@ typedef struct {
     size_t sensor_row_offset;
     char sensor_selected_text[320];
     char sensor_input_path[512];
+    ProgTP_IncidentStore incidents;
+    size_t selected_incident_index;
+    uint32_t incident_filter_state;
+    bool incident_operation_pending;
+    bool incident_operation_in_flight;
+    bool incident_has_result;
+    bool needs_incident_reload;
+    ProgTP_AppIncidentFormField incident_form_field;
+    char incident_form_equipment_code[16];
+    char incident_form_source[PROGTP_EQUIPMENT_NAME_SIZE];
+    char incident_form_type[PROGTP_INCIDENT_TYPE_SIZE];
+    char incident_form_description[PROGTP_INCIDENT_DESCRIPTION_SIZE];
+    char incident_form_priority[PROGTP_INCIDENT_PRIORITY_SIZE];
+    char incident_form_technician[PROGTP_INCIDENT_TECHNICIAN_SIZE];
+    char incident_metric_total_text[32];
+    char incident_metric_pending_text[32];
+    char incident_metric_in_progress_text[32];
+    char incident_metric_completed_text[32];
+    char incident_selected_text[512];
+    char incident_row_page_text[96];
+    char incident_row_texts[12][256];
+    uint32_t incident_row_numbers[12];
+    size_t incident_row_count;
+    size_t incident_row_offset;
+    char incident_form_display_text[PROGTP_APP_INCIDENT_FORM_FIELD_COUNT][PROGTP_INCIDENT_DESCRIPTION_SIZE + 2u];
+    ProgTP_IncidentOperationResponse incident_operation_result;
+    ProgTP_IncidentOperationRequest pending_incident_operation;
 } ProgTP_AppState;
 
 void ProgTP_HandleClayError(Clay_ErrorData errorData);
@@ -219,6 +278,12 @@ void ProgTP_AppCompleteSensorImport(
     const ProgTP_SensorStore *store);
 void ProgTP_AppFailConnectivityRequest(ProgTP_AppState *state, const char *error);
 void ProgTP_AppFailSensorImport(ProgTP_AppState *state, const char *error);
+bool ProgTP_AppTakeIncidentOperationRequest(ProgTP_AppState *state, ProgTP_IncidentOperationRequest *request);
+void ProgTP_AppCompleteIncidentOperation(ProgTP_AppState *state, const ProgTP_IncidentOperationResponse *response);
+void ProgTP_AppFailIncidentOperation(ProgTP_AppState *state, const char *error);
+void ProgTP_AppUseLoadedIncidents(ProgTP_AppState *state, const ProgTP_IncidentStore *store, const char *status);
+bool ProgTP_AppIncidentOperationPending(const ProgTP_AppState *state);
+bool ProgTP_AppIncidentOperationInFlight(const ProgTP_AppState *state);
 void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action);
 void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint);
 Clay_RenderCommandArray ProgTP_AppBuildLayout(ProgTP_AppState *state, const char *target_name, float delta_time);
