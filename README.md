@@ -108,9 +108,11 @@ Current overlays:
 
 - [ ] make the cursor look "clickable" on web and mobile
 - [ ] fix corrupted chars in the preview of the module 4
+- [ ] sort by priority on module 4
 - [ ] add a nice way to see reports in the app itself
 - [ ] add cli --help usage info
 - [ ] add docs for usage, and docs for features of each module
+- [ ] review requirements
 - [x] try to split the huge app.c file into ui files for each module
 - [x] maybe structure project better for helper functions like comparing strings ignoring case, validating IP/MAC formats, etc in connectivity.c for example
 - [x] see if for example i can use fio's helpers better instead of implementing my own
