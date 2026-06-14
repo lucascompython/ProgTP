@@ -69,10 +69,8 @@ const char *ModuleName(int module) {
         "Incident Queue",
         "Configuration Stack",
         "Files and Reports",
-        "Technicians",
-        "Settings",
     };
-    if (module < 1 || module > 8) {
+    if (module < 1 || module > 6) {
         return "Module";
     }
     return names[module - 1];
@@ -642,8 +640,6 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_MODULE_4: state->active_module = 4; state->needs_incident_reload = true; break;
         case PROGTP_APP_ACTION_MODULE_5: state->active_module = 5; break;
         case PROGTP_APP_ACTION_MODULE_6: state->active_module = 6; state->files_needs_refresh = true; break;
-        case PROGTP_APP_ACTION_MODULE_7: state->active_module = 7; break;
-        case PROGTP_APP_ACTION_MODULE_8: state->active_module = 8; break;
         case PROGTP_APP_ACTION_FORM_SUBMIT:
         case PROGTP_APP_ACTION_FORM_CANCEL:
         case PROGTP_APP_ACTION_FORM_NEXT_FIELD:
@@ -1034,7 +1030,7 @@ static void PrepareText(ProgTP_AppState *state) {
         "%s / %s",
         state->state_filter_enabled ? ProgTP_EquipmentStateName(state->state_filter) : "Any state",
         state->type_filter_text);
-    for (int module = 1; module <= 8; ++module) {
+    for (int module = 1; module <= 6; ++module) {
         snprintf(state->module_labels[module - 1], sizeof(state->module_labels[module - 1]), "%d. %s", module, ModuleName(module));
     }
     ProgTP_Equipment *selected = SelectedEquipment(state);
@@ -1129,7 +1125,7 @@ Clay_RenderCommandArray ProgTP_AppBuildLayout(ProgTP_AppState *state, const char
             }) {
                 TextLine("Mini NOC", 24, COLOR_WHITE);
                 TextLine("Modules", 13, COLOR_SURFACE_ALT);
-                for (int module = 1; module <= 8; ++module) {
+                for (int module = 1; module <= 6; ++module) {
                     ModuleButton(state, module);
                 }
             }

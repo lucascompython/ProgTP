@@ -74,8 +74,6 @@ static ProgTP_AppAction ActionFromTermboxEvent(const struct tb_event *event) {
         case '4': return PROGTP_APP_ACTION_MODULE_4;
         case '5': return PROGTP_APP_ACTION_MODULE_5;
         case '6': return PROGTP_APP_ACTION_MODULE_6;
-        case '7': return PROGTP_APP_ACTION_MODULE_7;
-        case '8': return PROGTP_APP_ACTION_MODULE_8;
         case 'c': case 'C': return PROGTP_APP_ACTION_SEARCH_CODE;
         case 'g': case 'G': return PROGTP_APP_ACTION_SENSOR_IMPORT;
         case 'o': case 'O': return PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE;

@@ -97,8 +97,6 @@ static ProgTP_AppAction ActionFromKey(SDL_Keycode key) {
         case SDLK_4: return PROGTP_APP_ACTION_MODULE_4;
         case SDLK_5: return PROGTP_APP_ACTION_MODULE_5;
         case SDLK_6: return PROGTP_APP_ACTION_MODULE_6;
-        case SDLK_7: return PROGTP_APP_ACTION_MODULE_7;
-        case SDLK_8: return PROGTP_APP_ACTION_MODULE_8;
         case SDLK_C: return PROGTP_APP_ACTION_SEARCH_CODE;
         case SDLK_G: return PROGTP_APP_ACTION_SENSOR_IMPORT;
         case SDLK_O: return PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE;
