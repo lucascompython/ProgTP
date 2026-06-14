@@ -259,6 +259,8 @@ typedef struct {
     char incident_metric_in_progress_text[32];
     char incident_metric_completed_text[32];
     char incident_selected_text[512];
+    char incident_detail_texts[5][256];
+    size_t incident_detail_count;
     char incident_row_page_text[96];
     char incident_row_texts[12][256];
     uint32_t incident_row_numbers[12];

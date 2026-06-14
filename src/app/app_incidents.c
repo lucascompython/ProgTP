@@ -1,6 +1,5 @@
 #include "app.h"
 #include "app_internal.h"
-#include "progtp_text.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +11,20 @@ static const char *IncidentStateLabel(ProgTP_IncidentState state) {
         case PROGTP_INCIDENT_COMPLETED: return "Completed";
     }
     return "Unknown";
+}
+
+static void AddIncidentDetailLine(ProgTP_AppState *state, const char *label, const char *value) {
+    size_t capacity = sizeof(state->incident_detail_texts) / sizeof(state->incident_detail_texts[0]);
+    if (state->incident_detail_count >= capacity) {
+        return;
+    }
+    snprintf(
+        state->incident_detail_texts[state->incident_detail_count],
+        sizeof(state->incident_detail_texts[state->incident_detail_count]),
+        "%s%s",
+        label,
+        value ? value : "");
+    ++state->incident_detail_count;
 }
 
 static bool IncidentVisible(const ProgTP_AppState *state, const ProgTP_Incident *incident) {
@@ -132,6 +145,7 @@ void PrepareIncidentText(ProgTP_AppState *state) {
     snprintf(state->incident_metric_completed_text, sizeof(state->incident_metric_completed_text), "%u completed", completed_count);
 
     EnsureIncidentSelectionInFilter(state);
+    state->incident_detail_count = 0;
     if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
         const ProgTP_Incident *selected = &state->incidents.items[state->selected_incident_index];
         snprintf(
@@ -143,6 +157,17 @@ void PrepareIncidentText(ProgTP_AppState *state) {
             selected->priority,
             IncidentStateLabel(selected->state),
             selected->source);
+        AddIncidentDetailLine(state, "Source: ", selected->source);
+        AddIncidentDetailLine(state, "Description: ", selected->description);
+        if (selected->technician[0] != '\0') {
+            AddIncidentDetailLine(state, "Technician: ", selected->technician);
+        }
+        if (selected->created_at[0] != '\0') {
+            AddIncidentDetailLine(state, "Created: ", selected->created_at);
+        }
+        if (selected->completed_at[0] != '\0') {
+            AddIncidentDetailLine(state, "Completed: ", selected->completed_at);
+        }
     } else {
         snprintf(state->incident_selected_text, sizeof(state->incident_selected_text), "No incident selected");
     }
@@ -278,24 +303,9 @@ void IncidentDetailPanel(ProgTP_AppState *state) {
     }) {
         TextLine("Selected incident", 16, COLOR_TEXT);
         if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
-            const ProgTP_Incident *selected = &state->incidents.items[state->selected_incident_index];
             TextLine(state->incident_selected_text, 13, COLOR_TEXT);
-            char detail[256];
-            snprintf(detail, sizeof(detail), "Source: %s", selected->source);
-            TextLine(detail, 12, COLOR_MUTED);
-            snprintf(detail, sizeof(detail), "Description: %s", selected->description);
-            TextLine(detail, 12, COLOR_MUTED);
-            if (selected->technician[0] != '\0') {
-                snprintf(detail, sizeof(detail), "Technician: %s", selected->technician);
-                TextLine(detail, 12, COLOR_MUTED);
-            }
-            if (selected->created_at[0] != '\0') {
-                snprintf(detail, sizeof(detail), "Created: %s", selected->created_at);
-                TextLine(detail, 12, COLOR_MUTED);
-            }
-            if (selected->completed_at[0] != '\0') {
-                snprintf(detail, sizeof(detail), "Completed: %s", selected->completed_at);
-                TextLine(detail, 12, COLOR_MUTED);
+            for (size_t i = 0; i < state->incident_detail_count; ++i) {
+                TextLine(state->incident_detail_texts[i], 12, COLOR_MUTED);
             }
         } else {
             TextLine("No incident selected", 13, COLOR_MUTED);
