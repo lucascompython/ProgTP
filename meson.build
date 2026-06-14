@@ -67,6 +67,7 @@ src_inc = include_directories(
     'src/app',
     'src/client',
     'src/common',
+    'src/domain/config',
     'src/domain/connectivity',
     'src/domain/incidents',
     'src/domain/inventory',
@@ -88,12 +89,13 @@ support_sources = files(
 )
 inventory_sources = files('src/domain/inventory/equipment_inventory.c')
 incident_sources = files('src/domain/incidents/incident_store.c')
+config_sources = files('src/domain/config/config_history.c')
 sensor_sources = files('src/domain/sensors/sensor_store.c')
 connectivity_model_sources = files('src/domain/connectivity/connectivity_model.c')
 connectivity_sources = files('src/domain/connectivity/connectivity.c') + connectivity_model_sources + incident_sources
 protocol_sources = files('src/protocol/protocol.c') + inventory_sources
 client_sources = files('src/client/command_client.c')
-lint_sources = support_sources + common_sources + protocol_sources + connectivity_sources + sensor_sources
+lint_sources = support_sources + common_sources + protocol_sources + connectivity_sources + sensor_sources + config_sources
 
 native_opt = get_option('native')
 tui_opt = get_option('tui')
@@ -163,7 +165,7 @@ if not server_opt.disabled() and facil_sp.found()
     facil_dep = facil_sp.get_variable('facil_dep').as_system('system')
     server_exe = executable(
         'progtp-server',
-        ['src/server/server.c', support_sources, protocol_sources, connectivity_sources, sensor_sources],
+        ['src/server/server.c', support_sources, protocol_sources, connectivity_sources, sensor_sources, config_sources],
         c_args: server_warning_suppressions,
         dependencies: [facil_dep, yyjson_dep],
         include_directories: src_inc,
@@ -252,6 +254,7 @@ if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
             client_sources,
             connectivity_sources,
             sensor_sources,
+            config_sources,
         ],
         dependencies: common_deps + [sdl3_dep, sdl3_ttf_dep, sdl3_image_dep, yyjson_dep, curl_dep],
         include_directories: src_inc,
@@ -280,6 +283,7 @@ if not tui_opt.disabled() and termbox2_sp.found()
             client_sources,
             connectivity_sources,
             sensor_sources,
+            config_sources,
         ],
         c_args: ['-D_DEFAULT_SOURCE'],
         dependencies: common_deps + [
@@ -333,6 +337,7 @@ if web_cc.found()
             'src/domain/inventory/equipment_inventory.c',
             'src/domain/connectivity/connectivity_model.c',
             'src/domain/incidents/incident_store.c',
+            'src/domain/config/config_history.c',
             'src/domain/sensors/sensor_store.c',
             'src/protocol/protocol.c',
         ],
@@ -362,6 +367,7 @@ if web_cc.found()
             '-I' + meson.current_source_dir() / 'src/domain/inventory',
             '-I' + meson.current_source_dir() / 'src/domain/connectivity',
             '-I' + meson.current_source_dir() / 'src/domain/incidents',
+            '-I' + meson.current_source_dir() / 'src/domain/config',
             '-I' + meson.current_source_dir() / 'src/domain/sensors',
             '-I' + meson.current_source_dir() / 'src/protocol',
             '-I' + meson.current_source_dir() / 'subprojects/yyjson/src',
@@ -388,6 +394,7 @@ if web_cc.found()
             '@INPUT14@',
             '@INPUT15@',
             '@INPUT16@',
+            '@INPUT17@',
             meson.current_source_dir() / 'subprojects/yyjson/src/yyjson.c',
         ],
         env: web_env,

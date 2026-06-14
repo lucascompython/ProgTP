@@ -408,6 +408,35 @@ bool ProgTP_EquipmentInventoryReplace(
     return true;
 }
 
+bool ProgTP_EquipmentInventoryApplySnapshot(
+    ProgTP_EquipmentInventory *inventory,
+    const ProgTP_Equipment *snapshot,
+    char *error,
+    size_t error_size) {
+    if (!inventory || !snapshot) {
+        ProgTP_SetError(error, error_size, "missing equipment inventory or snapshot");
+        return false;
+    }
+    if (snapshot->code == 0) {
+        ProgTP_SetError(error, error_size, "snapshot has no equipment code");
+        return false;
+    }
+    size_t index = FindIndexByCode(inventory, snapshot->code);
+    if (index == (size_t)-1) {
+        if (!EnsureArrayCapacity(&inventory->array, inventory->array.length + 1u)) {
+            ProgTP_SetError(error, error_size, "not enough memory to restore equipment");
+            return false;
+        }
+        inventory->array.items[inventory->array.length++] = *snapshot;
+        if (inventory->next_code <= snapshot->code) {
+            inventory->next_code = snapshot->code + 1u;
+        }
+    } else {
+        inventory->array.items[index] = *snapshot;
+    }
+    return true;
+}
+
 void ProgTP_EquipmentInventorySeedDefaults(ProgTP_EquipmentInventory *inventory) {
     if (inventory->array.length > 0) {
         return;

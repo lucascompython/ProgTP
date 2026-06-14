@@ -127,6 +127,11 @@ bool ProgTP_EquipmentInventoryReplace(
     uint32_t next_code,
     char *error,
     size_t error_size);
+bool ProgTP_EquipmentInventoryApplySnapshot(
+    ProgTP_EquipmentInventory *inventory,
+    const ProgTP_Equipment *snapshot,
+    char *error,
+    size_t error_size);
 
 void ProgTP_EquipmentInventorySeedDefaults(ProgTP_EquipmentInventory *inventory);
 void ProgTP_EquipmentInventorySummary(const ProgTP_EquipmentInventory *inventory, char *buffer, size_t buffer_size);
