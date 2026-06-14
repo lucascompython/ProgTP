@@ -11,5 +11,6 @@ bool ProgTP_TextContainsIgnoreCase(const char *text, const char *needle);
 char *ProgTP_TextTrimLeft(char *value);
 void ProgTP_TextTrimRight(char *value);
 char *ProgTP_TextTrim(char *value);
+void ProgTP_TextSanitizePrintable(char *value);
 
 #endif

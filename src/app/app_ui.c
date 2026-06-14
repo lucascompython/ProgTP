@@ -18,6 +18,14 @@ static void HandleUiInteraction(Clay_ElementId element_id, Clay_PointerData poin
         return;
     }
     uintptr_t value = (uintptr_t)user_data;
+    if (value >= PROGTP_UI_FILES_SELECT_BASE) {
+        size_t idx = (size_t)(value - PROGTP_UI_FILES_SELECT_BASE);
+        if (idx < ProgTP_AppGetFilesCount()) {
+            progtp_interaction_state->files_selected_index = idx;
+            progtp_interaction_state->files_needs_refresh = true;
+        }
+        return;
+    }
     if (value >= PROGTP_UI_CONFIG_SELECT_BASE) {
         uint32_t entry_id = (uint32_t)(value - PROGTP_UI_CONFIG_SELECT_BASE);
         for (size_t i = 0; i < progtp_interaction_state->config_history.length; ++i) {

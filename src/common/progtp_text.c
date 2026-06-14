@@ -95,3 +95,16 @@ char *ProgTP_TextTrim(char *value) {
     ProgTP_TextTrimRight(trimmed);
     return trimmed;
 }
+
+void ProgTP_TextSanitizePrintable(char *value) {
+    if (!value) {
+        return;
+    }
+    for (; *value; ++value) {
+        unsigned char c = (unsigned char)*value;
+        if (c < 0x20u || c > 0x7Eu) {
+            *value = '\0';
+            return;
+        }
+    }
+}

@@ -574,6 +574,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 MoveIncidentSelection(state, 1);
             } else if (state->active_module == 5) {
                 MoveConfigSelection(state, 1);
+            } else if (state->active_module == 6) {
+                MoveFilesSelection(state, 1);
             } else {
                 MoveSelection(state, 1);
             }
@@ -585,6 +587,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 MoveIncidentSelection(state, -1);
             } else if (state->active_module == 5) {
                 MoveConfigSelection(state, -1);
+            } else if (state->active_module == 6) {
+                MoveFilesSelection(state, -1);
             } else {
                 MoveSelection(state, -1);
             }
@@ -637,7 +641,7 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_MODULE_3: state->active_module = 3; break;
         case PROGTP_APP_ACTION_MODULE_4: state->active_module = 4; state->needs_incident_reload = true; break;
         case PROGTP_APP_ACTION_MODULE_5: state->active_module = 5; break;
-        case PROGTP_APP_ACTION_MODULE_6: state->active_module = 6; break;
+        case PROGTP_APP_ACTION_MODULE_6: state->active_module = 6; state->files_needs_refresh = true; break;
         case PROGTP_APP_ACTION_MODULE_7: state->active_module = 7; break;
         case PROGTP_APP_ACTION_MODULE_8: state->active_module = 8; break;
         case PROGTP_APP_ACTION_FORM_SUBMIT:
@@ -755,6 +759,29 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_CONFIG_FILTER_UNDONE:
             state->config_filter_state = 2;
             state->config_row_offset = 0;
+            break;
+        case PROGTP_APP_ACTION_FILES_REFRESH:
+            state->files_needs_refresh = true;
+            state->files_preview_loaded = false;
+            break;
+        case PROGTP_APP_ACTION_FILES_PREVIOUS: MoveFilesSelection(state, -1); break;
+        case PROGTP_APP_ACTION_FILES_NEXT: MoveFilesSelection(state, 1); break;
+        case PROGTP_APP_ACTION_FILES_PAGE_PREVIOUS: PageFiles(state, -1); break;
+        case PROGTP_APP_ACTION_FILES_PAGE_NEXT: PageFiles(state, 1); break;
+        case PROGTP_APP_ACTION_FILES_FILTER_ALL:
+            state->files_filter_state = 0;
+            state->files_row_offset = 0;
+            state->files_preview_loaded = false;
+            break;
+        case PROGTP_APP_ACTION_FILES_FILTER_BINARY:
+            state->files_filter_state = 1;
+            state->files_row_offset = 0;
+            state->files_preview_loaded = false;
+            break;
+        case PROGTP_APP_ACTION_FILES_FILTER_TEXT:
+            state->files_filter_state = 2;
+            state->files_row_offset = 0;
+            state->files_preview_loaded = false;
             break;
         case PROGTP_APP_ACTION_INCIDENT_ADD:
             OpenAddIncidentModal(state);
@@ -983,6 +1010,12 @@ static void PrepareText(ProgTP_AppState *state) {
             sizeof(state->summary_text),
             "%s",
             "Review configuration changes, undo and redo up to the last 25 equipment mutations");
+    } else if (state->active_module == 6) {
+        snprintf(
+            state->summary_text,
+            sizeof(state->summary_text),
+            "%s",
+            "Browse data files, see size and modification time, and preview binary or text content");
     } else {
         snprintf(
             state->summary_text,
@@ -1041,6 +1074,7 @@ static void PrepareText(ProgTP_AppState *state) {
     PrepareSensorText(state);
     PrepareIncidentText(state);
     PrepareConfigText(state);
+    PrepareFilesText(state);
 }
 
 static void MainModule(ProgTP_AppState *state) {
@@ -1054,6 +1088,8 @@ static void MainModule(ProgTP_AppState *state) {
         IncidentModule(state);
     } else if (state->active_module == 5) {
         ConfigModule(state);
+    } else if (state->active_module == 6) {
+        FilesModule(state);
     } else {
         PlaceholderModule(state->active_module);
     }

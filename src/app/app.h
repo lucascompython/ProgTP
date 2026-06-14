@@ -105,6 +105,14 @@ typedef enum {
     PROGTP_APP_ACTION_CONFIG_FILTER_UNDONE,
     PROGTP_APP_ACTION_CONFIG_IMPORT,
     PROGTP_APP_ACTION_CONFIG_DELETE,
+    PROGTP_APP_ACTION_FILES_REFRESH,
+    PROGTP_APP_ACTION_FILES_PREVIOUS,
+    PROGTP_APP_ACTION_FILES_NEXT,
+    PROGTP_APP_ACTION_FILES_PAGE_PREVIOUS,
+    PROGTP_APP_ACTION_FILES_PAGE_NEXT,
+    PROGTP_APP_ACTION_FILES_FILTER_ALL,
+    PROGTP_APP_ACTION_FILES_FILTER_BINARY,
+    PROGTP_APP_ACTION_FILES_FILTER_TEXT,
 } ProgTP_AppAction;
 
 typedef enum {
@@ -284,6 +292,19 @@ typedef struct {
     char config_row_texts[12][256];
     size_t config_row_count;
     size_t config_row_offset;
+    char files_metric_total_text[32];
+    char files_metric_selected_text[64];
+    char files_selected_text[640];
+    char files_row_texts[12][256];
+    char files_row_page_text[96];
+    size_t files_row_count;
+    size_t files_row_offset;
+    size_t files_selected_index;
+    uint32_t files_filter_state;
+    char files_preview_lines[128][192];
+    size_t files_preview_line_count;
+    bool files_needs_refresh;
+    bool files_preview_loaded;
 } ProgTP_AppState;
 
 void ProgTP_HandleClayError(Clay_ErrorData errorData);

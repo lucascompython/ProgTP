@@ -11,6 +11,7 @@
 #define PROGTP_UI_INCIDENT_SELECT_BASE 5000u
 #define PROGTP_UI_INCIDENT_FORM_FIELD_BASE 6000u
 #define PROGTP_UI_CONFIG_SELECT_BASE 7000u
+#define PROGTP_UI_FILES_SELECT_BASE 8000u
 #define PROGTP_UI_FORM_FIELD_BASE 3000u
 #define PROGTP_UI_FORM_STATE_BASE 4000u
 #define PROGTP_VISIBLE_ROWS 12u
@@ -105,6 +106,12 @@ void PrepareConfigText(ProgTP_AppState *state);
 void MoveConfigSelection(ProgTP_AppState *state, int direction);
 void PageConfig(ProgTP_AppState *state, int direction);
 void ConfigModule(ProgTP_AppState *state);
+
+void PrepareFilesText(ProgTP_AppState *state);
+void MoveFilesSelection(ProgTP_AppState *state, int direction);
+void PageFiles(ProgTP_AppState *state, int direction);
+void FilesModule(ProgTP_AppState *state);
+size_t ProgTP_AppGetFilesCount(void);
 
 int32_t CStringLength(const char *value);
 Clay_String StringFromCString(const char *value);

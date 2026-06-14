@@ -79,7 +79,7 @@ clay_sp = subproject('clay')
 clay_dep = clay_sp.get_variable('clay_dep').as_system('system')
 clay_root = clay_sp.get_variable('clay_root')
 
-common_sources = files('src/app/app.c', 'src/app/app_ui.c', 'src/app/app_placeholder.c', 'src/app/app_inventory.c', 'src/app/app_connectivity.c', 'src/app/app_sensors.c', 'src/app/app_modal.c', 'src/app/app_incidents.c', 'src/app/app_config.c')
+common_sources = files('src/app/app.c', 'src/app/app_ui.c', 'src/app/app_placeholder.c', 'src/app/app_inventory.c', 'src/app/app_connectivity.c', 'src/app/app_sensors.c', 'src/app/app_modal.c', 'src/app/app_incidents.c', 'src/app/app_config.c', 'src/app/app_files.c')
 common_deps = [clay_dep]
 platform_targets = []
 support_sources = files(
@@ -332,6 +332,7 @@ if web_cc.found()
             'src/app/app_modal.c',
             'src/app/app_incidents.c',
             'src/app/app_config.c',
+            'src/app/app_files.c',
             'src/common/progtp_error.c',
             'src/common/progtp_text.c',
             'src/common/progtp_time.c',
@@ -397,6 +398,7 @@ if web_cc.found()
             '@INPUT16@',
             '@INPUT17@',
             '@INPUT18@',
+            '@INPUT19@',
             meson.current_source_dir() / 'subprojects/yyjson/src/yyjson.c',
         ],
         env: web_env,
