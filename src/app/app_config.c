@@ -14,8 +14,8 @@ static bool ConfigVisible(const ProgTP_AppState *state, const ProgTP_ConfigEntry
 
 static size_t CountVisibleConfig(const ProgTP_AppState *state) {
     size_t count = 0;
-    for (size_t i = 0; i < state->config_history.length; ++i) {
-        if (ConfigVisible(state, &state->config_history.items[i])) {
+    for (size_t i = 0; i < ProgTP_ConfigHistoryGetCount(&state->config_history); ++i) {
+        if (ConfigVisible(state, ProgTP_ConfigHistoryGetByIndex(&state->config_history, i))) {
             ++count;
         }
     }
@@ -24,8 +24,8 @@ static size_t CountVisibleConfig(const ProgTP_AppState *state) {
 
 static bool SelectVisibleConfigAt(ProgTP_AppState *state, size_t visible_index) {
     size_t current = 0;
-    for (size_t i = 0; i < state->config_history.length; ++i) {
-        if (!ConfigVisible(state, &state->config_history.items[i])) {
+    for (size_t i = 0; i < ProgTP_ConfigHistoryGetCount(&state->config_history); ++i) {
+        if (!ConfigVisible(state, ProgTP_ConfigHistoryGetByIndex(&state->config_history, i))) {
             continue;
         }
         if (current == visible_index) {
@@ -38,12 +38,13 @@ static bool SelectVisibleConfigAt(ProgTP_AppState *state, size_t visible_index) 
 }
 
 static void EnsureConfigSelection(ProgTP_AppState *state) {
-    if (state->config_history.length == 0) {
+    size_t count = ProgTP_ConfigHistoryGetCount(&state->config_history);
+    if (count == 0) {
         state->selected_config_index = 0;
         return;
     }
-    if (state->selected_config_index >= state->config_history.length) {
-        state->selected_config_index = state->config_history.length - 1u;
+    if (state->selected_config_index >= count) {
+        state->selected_config_index = count - 1u;
     }
 }
 
@@ -55,8 +56,8 @@ void MoveConfigSelection(ProgTP_AppState *state, int direction) {
     }
     size_t current = 0;
     bool found = false;
-    for (size_t i = 0; i < state->config_history.length; ++i) {
-        if (!ConfigVisible(state, &state->config_history.items[i])) {
+    for (size_t i = 0; i < ProgTP_ConfigHistoryGetCount(&state->config_history); ++i) {
+        if (!ConfigVisible(state, ProgTP_ConfigHistoryGetByIndex(&state->config_history, i))) {
             continue;
         }
         if (i == state->selected_config_index) {
@@ -99,14 +100,14 @@ void PageConfig(ProgTP_AppState *state, int direction) {
 void PrepareConfigText(ProgTP_AppState *state) {
     size_t applied = ProgTP_ConfigHistoryAppliedCount(&state->config_history);
     size_t undone = ProgTP_ConfigHistoryUndoneCount(&state->config_history);
-    snprintf(state->config_metric_total_text, sizeof(state->config_metric_total_text), "%zu total", state->config_history.length);
+    snprintf(state->config_metric_total_text, sizeof(state->config_metric_total_text), "%zu total", ProgTP_ConfigHistoryGetCount(&state->config_history));
     snprintf(state->config_metric_applied_text, sizeof(state->config_metric_applied_text), "%zu applied", applied);
     snprintf(state->config_metric_undone_text, sizeof(state->config_metric_undone_text), "%zu undone", undone);
 
     EnsureConfigSelection(state);
 
-    if (state->config_history.length > 0 && state->selected_config_index < state->config_history.length) {
-        const ProgTP_ConfigEntry *selected = &state->config_history.items[state->selected_config_index];
+    if (ProgTP_ConfigHistoryGetCount(&state->config_history) > 0 && state->selected_config_index < ProgTP_ConfigHistoryGetCount(&state->config_history)) {
+        const ProgTP_ConfigEntry *selected = ProgTP_ConfigHistoryGetByIndex(&state->config_history, state->selected_config_index);
         ProgTP_ConfigHistoryFormatDetail(selected, state->config_selected_text, sizeof(state->config_selected_text));
     } else {
         snprintf(state->config_selected_text, sizeof(state->config_selected_text), "No configuration entry selected");
@@ -125,8 +126,8 @@ void PrepareConfigText(ProgTP_AppState *state) {
 
     size_t selected_visible_index = (size_t)-1;
     size_t visible_index = 0;
-    for (size_t i = 0; i < state->config_history.length; ++i) {
-        if (!ConfigVisible(state, &state->config_history.items[i])) {
+    for (size_t i = 0; i < ProgTP_ConfigHistoryGetCount(&state->config_history); ++i) {
+        if (!ConfigVisible(state, ProgTP_ConfigHistoryGetByIndex(&state->config_history, i))) {
             continue;
         }
         if (i == state->selected_config_index) {
@@ -142,8 +143,8 @@ void PrepareConfigText(ProgTP_AppState *state) {
     }
 
     visible_index = 0;
-    for (size_t i = 0; i < state->config_history.length && state->config_row_count < PROGTP_VISIBLE_ROWS; ++i) {
-        const ProgTP_ConfigEntry *entry = &state->config_history.items[i];
+    for (size_t i = 0; i < ProgTP_ConfigHistoryGetCount(&state->config_history) && state->config_row_count < PROGTP_VISIBLE_ROWS; ++i) {
+        const ProgTP_ConfigEntry *entry = ProgTP_ConfigHistoryGetByIndex(&state->config_history, i);
         if (!ConfigVisible(state, entry)) {
             continue;
         }
@@ -201,8 +202,8 @@ static void ConfigRows(ProgTP_AppState *state) {
         for (size_t i = 0; i < state->config_row_count; ++i) {
             size_t entry_index = (size_t)-1;
             size_t visible_index = 0;
-            for (size_t j = 0; j < state->config_history.length; ++j) {
-                if (!ConfigVisible(state, &state->config_history.items[j])) {
+            for (size_t j = 0; j < ProgTP_ConfigHistoryGetCount(&state->config_history); ++j) {
+                if (!ConfigVisible(state, ProgTP_ConfigHistoryGetByIndex(&state->config_history, j))) {
                     continue;
                 }
                 if (visible_index == state->config_row_offset + i) {
@@ -223,7 +224,7 @@ static void ConfigRows(ProgTP_AppState *state) {
                 },
                 .backgroundColor = selected ? COLOR_ACCENT : (i % 2u == 0 ? COLOR_SURFACE : COLOR_SURFACE_ALT),
             }) {
-                AttachInteraction(PROGTP_UI_CONFIG_SELECT_BASE + (uintptr_t)state->config_history.items[entry_index].id);
+                AttachInteraction(PROGTP_UI_CONFIG_SELECT_BASE + (uintptr_t)ProgTP_ConfigHistoryGetByIndex(&state->config_history, entry_index)->id);
                 TextLine(state->config_row_texts[i], 12, selected ? COLOR_WHITE : COLOR_TEXT);
             }
         }
@@ -246,7 +247,7 @@ static void ConfigDetailPanel(ProgTP_AppState *state) {
         .cornerRadius = CLAY_CORNER_RADIUS(5),
     }) {
         TextLine("Selected change", 16, COLOR_TEXT);
-        if (state->config_history.length > 0 && state->selected_config_index < state->config_history.length) {
+        if (ProgTP_ConfigHistoryGetCount(&state->config_history) > 0 && state->selected_config_index < ProgTP_ConfigHistoryGetCount(&state->config_history)) {
             TextLine(state->config_selected_text, 12, COLOR_TEXT);
         } else {
             TextLine("No configuration entry selected", 13, COLOR_MUTED);
@@ -286,7 +287,7 @@ void ConfigModule(ProgTP_AppState *state) {
             Button(810, "Undo", PROGTP_APP_ACTION_CONFIG_UNDO, ProgTP_ConfigHistoryCanUndo(&state->config_history), false);
             Button(811, "Redo", PROGTP_APP_ACTION_CONFIG_REDO, ProgTP_ConfigHistoryCanRedo(&state->config_history), false);
             Button(812, "Import", PROGTP_APP_ACTION_CONFIG_IMPORT, true, false);
-            Button(813, "Delete", PROGTP_APP_ACTION_CONFIG_DELETE, state->config_history.length > 0, true);
+            Button(813, "Delete", PROGTP_APP_ACTION_CONFIG_DELETE, ProgTP_ConfigHistoryGetCount(&state->config_history) > 0, true);
         }
         CLAY(CLAY_ID("ConfigFilters"), {
             .layout = {
@@ -296,8 +297,8 @@ void ConfigModule(ProgTP_AppState *state) {
         }) {
             Button(820, "All", PROGTP_APP_ACTION_CONFIG_FILTER_ALL, state->config_filter_state == 0, false);
             Button(821, "Undone", PROGTP_APP_ACTION_CONFIG_FILTER_UNDONE, state->config_filter_state == 2, false);
-            Button(822, "Prev", PROGTP_APP_ACTION_CONFIG_PREVIOUS, state->config_history.length > 1, false);
-            Button(823, "Next", PROGTP_APP_ACTION_CONFIG_NEXT, state->config_history.length > 1, false);
+            Button(822, "Prev", PROGTP_APP_ACTION_CONFIG_PREVIOUS, ProgTP_ConfigHistoryGetCount(&state->config_history) > 1, false);
+            Button(823, "Next", PROGTP_APP_ACTION_CONFIG_NEXT, ProgTP_ConfigHistoryGetCount(&state->config_history) > 1, false);
         }
         CLAY(CLAY_ID("ConfigContent"), {
             .layout = {

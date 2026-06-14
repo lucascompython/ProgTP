@@ -107,7 +107,7 @@ void PrepareConnectivityText(ProgTP_AppState *state) {
             : "Enter a command, for example: nslookup {ip}",
         state->input_mode == PROGTP_APP_INPUT_CONNECTIVITY_COMMAND ? "_" : "");
 
-    size_t count = state->inventory.array.length;
+    size_t count = ProgTP_EquipmentInventoryGetCount(&state->inventory);
     if (count == 0) {
         state->connectivity_row_offset = 0;
     } else if (state->connectivity_row_offset >= count) {
@@ -115,7 +115,7 @@ void PrepareConnectivityText(ProgTP_AppState *state) {
     }
     size_t selected_index = (size_t)-1;
     for (size_t i = 0; i < count; ++i) {
-        if (state->inventory.array.items[i].code == state->selected_code) {
+        if (ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i)->code == state->selected_code) {
             selected_index = i;
             break;
         }
@@ -129,7 +129,7 @@ void PrepareConnectivityText(ProgTP_AppState *state) {
     for (size_t i = state->connectivity_row_offset;
          i < count && state->connectivity_row_count < PROGTP_VISIBLE_ROWS;
          ++i) {
-        const ProgTP_Equipment *equipment = &state->inventory.array.items[i];
+        const ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i);
         size_t row = state->connectivity_row_count++;
         state->connectivity_row_codes[row] = equipment->code;
         snprintf(

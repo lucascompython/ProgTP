@@ -318,11 +318,11 @@ bool ProgTP_RunLocalIncidentOperation(
         case PROGTP_INCIDENT_OP_CREATE: {
             ProgTP_Incident incident = request->incident;
             incident.number = 0;
-            if (!ProgTP_IncidentStoreAppend(store, &incident, incident_path, error, error_size)) {
+            if (!ProgTP_IncidentStoreEnqueue(store, &incident, incident_path, error, error_size)) {
                 return false;
             }
             response->success = true;
-            response->incident_number = store->items[store->length - 1u].number;
+            response->incident_number = ProgTP_IncidentStoreGetByIndex(store, ProgTP_IncidentStoreGetCount(store) - 1u)->number;
             snprintf(response->message, sizeof(response->message), "Incident #%u created", response->incident_number);
             return true;
         }
@@ -336,7 +336,7 @@ bool ProgTP_RunLocalIncidentOperation(
             return true;
         }
         case PROGTP_INCIDENT_OP_DELETE: {
-            if (!ProgTP_IncidentStoreDelete(store, request->incident.number, incident_path, error, error_size)) {
+            if (!ProgTP_IncidentStoreDequeue(store, request->incident.number, incident_path, error, error_size)) {
                 return false;
             }
             response->success = true;
@@ -451,7 +451,7 @@ bool ProgTP_RunLocalConfigOperation(
             snprintf(response->message, sizeof(response->message), "Imported config history from %.280s", import_path);
         }
     } else if (request->operation == PROGTP_CONFIG_OP_DELETE) {
-        ok = ProgTP_ConfigHistoryDeleteById(history, request->entry_id, error, error_size);
+        ok = ProgTP_ConfigHistoryPop(history, request->entry_id, error, error_size);
         if (ok) {
             snprintf(response->message, sizeof(response->message), "Removed config entry #%u", request->entry_id);
         }

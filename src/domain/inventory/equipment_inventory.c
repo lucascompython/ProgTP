@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #define PROGTP_EQUIPMENT_FILE_MAGIC "PTPEQP1"
 #define PROGTP_EQUIPMENT_FILE_VERSION 1u
 
@@ -18,30 +19,26 @@ typedef struct {
     uint64_t count;
 } ProgTP_EquipmentFileHeader;
 
-static bool EnsureArrayCapacity(ProgTP_EquipmentArray *array, size_t required) {
-    if (array->capacity >= required) {
-        return true;
+static ProgTP_EquipmentNode *FindNodeByCode(ProgTP_EquipmentInventory *inventory, uint32_t code) {
+    ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (current->equipment.code == code) {
+            return current;
+        }
+        current = current->next;
     }
-    size_t next_capacity = array->capacity == 0 ? 8u : array->capacity * 2u;
-    while (next_capacity < required) {
-        next_capacity *= 2u;
-    }
-    ProgTP_Equipment *next = realloc(array->items, next_capacity * sizeof(*array->items));
-    if (!next) {
-        return false;
-    }
-    array->items = next;
-    array->capacity = next_capacity;
-    return true;
+    return NULL;
 }
 
-static size_t FindIndexByCode(const ProgTP_EquipmentInventory *inventory, uint32_t code) {
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        if (inventory->array.items[i].code == code) {
-            return i;
+static const ProgTP_EquipmentNode *FindNodeByCodeConst(const ProgTP_EquipmentInventory *inventory, uint32_t code) {
+    const ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (current->equipment.code == code) {
+            return current;
         }
+        current = current->next;
     }
-    return (size_t)-1;
+    return NULL;
 }
 
 static bool ValidateInput(const ProgTP_EquipmentInventory *inventory, const ProgTP_EquipmentInput *input, uint32_t existing_code, char *error, size_t error_size) {
@@ -49,19 +46,21 @@ static bool ValidateInput(const ProgTP_EquipmentInventory *inventory, const Prog
         ProgTP_SetError(error, error_size, "name, type, IP address, and MAC address are required");
         return false;
     }
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        const ProgTP_Equipment *equipment = &inventory->array.items[i];
-        if (equipment->code == existing_code) {
+    const ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (current->equipment.code == existing_code) {
+            current = current->next;
             continue;
         }
-        if (strcmp(equipment->ip_address, input->ip_address) == 0) {
+        if (strcmp(current->equipment.ip_address, input->ip_address) == 0) {
             ProgTP_SetError(error, error_size, "another equipment already uses this IP address");
             return false;
         }
-        if (ProgTP_TextEqualsIgnoreCase(equipment->mac_address, input->mac_address)) {
+        if (ProgTP_TextEqualsIgnoreCase(current->equipment.mac_address, input->mac_address)) {
             ProgTP_SetError(error, error_size, "another equipment already uses this MAC address");
             return false;
         }
+        current = current->next;
     }
     return true;
 }
@@ -76,11 +75,42 @@ void ProgTP_EquipmentInventoryDestroy(ProgTP_EquipmentInventory *inventory) {
 }
 
 void ProgTP_EquipmentInventoryClear(ProgTP_EquipmentInventory *inventory) {
-    free(inventory->array.items);
-    inventory->array.items = NULL;
-    inventory->array.length = 0;
-    inventory->array.capacity = 0;
+    ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        ProgTP_EquipmentNode *next = current->next;
+        free(current);
+        current = next;
+    }
+    inventory->head = NULL;
+    inventory->tail = NULL;
+    inventory->length = 0;
     inventory->next_code = 1;
+}
+
+size_t ProgTP_EquipmentInventoryGetCount(const ProgTP_EquipmentInventory *inventory) {
+    return inventory ? inventory->length : 0u;
+}
+
+const ProgTP_Equipment *ProgTP_EquipmentInventoryGetByIndex(const ProgTP_EquipmentInventory *inventory, size_t index) {
+    if (!inventory || index >= inventory->length) {
+        return NULL;
+    }
+    const ProgTP_EquipmentNode *current = inventory->head;
+    for (size_t i = 0; i < index && current; ++i) {
+        current = current->next;
+    }
+    return current ? &current->equipment : NULL;
+}
+
+ProgTP_Equipment *ProgTP_EquipmentInventoryGetByIndexMut(ProgTP_EquipmentInventory *inventory, size_t index) {
+    if (!inventory || index >= inventory->length) {
+        return NULL;
+    }
+    ProgTP_EquipmentNode *current = inventory->head;
+    for (size_t i = 0; i < index && current; ++i) {
+        current = current->next;
+    }
+    return current ? &current->equipment : NULL;
 }
 
 bool ProgTP_EquipmentInputInit(
@@ -118,29 +148,37 @@ bool ProgTP_EquipmentInventoryAdd(
     if (!ValidateInput(inventory, input, 0, error, error_size)) {
         return false;
     }
-    if (!EnsureArrayCapacity(&inventory->array, inventory->array.length + 1u)) {
+    ProgTP_EquipmentNode *node = calloc(1u, sizeof(*node));
+    if (!node) {
         ProgTP_SetError(error, error_size, "not enough memory to add equipment");
         return false;
     }
-
-    ProgTP_Equipment equipment = {0};
-    equipment.code = inventory->next_code++;
-    ProgTP_TextCopy(equipment.name, sizeof(equipment.name), input->name);
-    ProgTP_TextCopy(equipment.type, sizeof(equipment.type), input->type);
-    ProgTP_TextCopy(equipment.brand, sizeof(equipment.brand), input->brand);
-    ProgTP_TextCopy(equipment.model, sizeof(equipment.model), input->model);
-    ProgTP_TextCopy(equipment.ip_address, sizeof(equipment.ip_address), input->ip_address);
-    ProgTP_TextCopy(equipment.mac_address, sizeof(equipment.mac_address), input->mac_address);
-    ProgTP_TextCopy(equipment.location, sizeof(equipment.location), input->location);
-    equipment.state = input->state;
-    ProgTP_TextCopy(equipment.last_checked, sizeof(equipment.last_checked), ProgTP_TextIsEmpty(input->last_checked) ? "" : input->last_checked);
-    if (ProgTP_TextIsEmpty(equipment.last_checked)) {
-        ProgTP_FormatCurrentDate(equipment.last_checked, sizeof(equipment.last_checked));
+    node->equipment.code = inventory->next_code++;
+    ProgTP_TextCopy(node->equipment.name, sizeof(node->equipment.name), input->name);
+    ProgTP_TextCopy(node->equipment.type, sizeof(node->equipment.type), input->type);
+    ProgTP_TextCopy(node->equipment.brand, sizeof(node->equipment.brand), input->brand);
+    ProgTP_TextCopy(node->equipment.model, sizeof(node->equipment.model), input->model);
+    ProgTP_TextCopy(node->equipment.ip_address, sizeof(node->equipment.ip_address), input->ip_address);
+    ProgTP_TextCopy(node->equipment.mac_address, sizeof(node->equipment.mac_address), input->mac_address);
+    ProgTP_TextCopy(node->equipment.location, sizeof(node->equipment.location), input->location);
+    node->equipment.state = input->state;
+    ProgTP_TextCopy(node->equipment.last_checked, sizeof(node->equipment.last_checked), ProgTP_TextIsEmpty(input->last_checked) ? "" : input->last_checked);
+    if (ProgTP_TextIsEmpty(node->equipment.last_checked)) {
+        ProgTP_FormatCurrentDate(node->equipment.last_checked, sizeof(node->equipment.last_checked));
     }
+    node->next = NULL;
 
-    inventory->array.items[inventory->array.length++] = equipment;
+    if (!inventory->tail) {
+        inventory->head = node;
+        inventory->tail = node;
+    } else {
+        inventory->tail->next = node;
+        inventory->tail = node;
+    }
+    ++inventory->length;
+
     if (created) {
-        *created = equipment;
+        *created = node->equipment;
     }
     return true;
 }
@@ -150,19 +188,33 @@ bool ProgTP_EquipmentInventoryRemove(
     uint32_t code,
     char *error,
     size_t error_size) {
-    size_t index = FindIndexByCode(inventory, code);
-    if (index == (size_t)-1) {
+    ProgTP_EquipmentNode *prev = NULL;
+    ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (current->equipment.code == code) {
+            break;
+        }
+        prev = current;
+        current = current->next;
+    }
+    if (!current) {
         ProgTP_SetError(error, error_size, "equipment code not found");
         return false;
     }
-    if (inventory->array.items[index].has_pending_incidents) {
+    if (current->equipment.has_pending_incidents) {
         ProgTP_SetError(error, error_size, "equipment cannot be removed because it has pending technical incidents");
         return false;
     }
-    if (index + 1u < inventory->array.length) {
-        memmove(&inventory->array.items[index], &inventory->array.items[index + 1u], (inventory->array.length - index - 1u) * sizeof(*inventory->array.items));
+    if (prev) {
+        prev->next = current->next;
+    } else {
+        inventory->head = current->next;
     }
-    --inventory->array.length;
+    if (current == inventory->tail) {
+        inventory->tail = prev;
+    }
+    free(current);
+    --inventory->length;
     return true;
 }
 
@@ -172,15 +224,15 @@ bool ProgTP_EquipmentInventoryUpdate(
     const ProgTP_EquipmentInput *input,
     char *error,
     size_t error_size) {
-    size_t index = FindIndexByCode(inventory, code);
-    if (index == (size_t)-1) {
+    ProgTP_EquipmentNode *node = FindNodeByCode(inventory, code);
+    if (!node) {
         ProgTP_SetError(error, error_size, "equipment code not found");
         return false;
     }
     if (!ValidateInput(inventory, input, code, error, error_size)) {
         return false;
     }
-    ProgTP_Equipment *equipment = &inventory->array.items[index];
+    ProgTP_Equipment *equipment = &node->equipment;
     ProgTP_TextCopy(equipment->name, sizeof(equipment->name), input->name);
     ProgTP_TextCopy(equipment->type, sizeof(equipment->type), input->type);
     ProgTP_TextCopy(equipment->brand, sizeof(equipment->brand), input->brand);
@@ -225,54 +277,64 @@ bool ProgTP_EquipmentInventorySetPendingIncidents(
 }
 
 ProgTP_Equipment *ProgTP_EquipmentInventoryFindByCode(ProgTP_EquipmentInventory *inventory, uint32_t code) {
-    size_t index = FindIndexByCode(inventory, code);
-    return index == (size_t)-1 ? NULL : &inventory->array.items[index];
+    ProgTP_EquipmentNode *node = FindNodeByCode(inventory, code);
+    return node ? &node->equipment : NULL;
 }
 
 ProgTP_Equipment *ProgTP_EquipmentInventoryFindByIp(ProgTP_EquipmentInventory *inventory, const char *ip_address) {
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        if (strcmp(inventory->array.items[i].ip_address, ip_address) == 0) {
-            return &inventory->array.items[i];
+    ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (strcmp(current->equipment.ip_address, ip_address) == 0) {
+            return &current->equipment;
         }
+        current = current->next;
     }
     return NULL;
 }
 
 ProgTP_Equipment *ProgTP_EquipmentInventoryFindByMac(ProgTP_EquipmentInventory *inventory, const char *mac_address) {
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        if (ProgTP_TextEqualsIgnoreCase(inventory->array.items[i].mac_address, mac_address)) {
-            return &inventory->array.items[i];
+    ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (ProgTP_TextEqualsIgnoreCase(current->equipment.mac_address, mac_address)) {
+            return &current->equipment;
         }
+        current = current->next;
     }
     return NULL;
 }
 
 const ProgTP_Equipment *ProgTP_EquipmentInventoryFindByCodeConst(const ProgTP_EquipmentInventory *inventory, uint32_t code) {
-    size_t index = FindIndexByCode(inventory, code);
-    return index == (size_t)-1 ? NULL : &inventory->array.items[index];
+    const ProgTP_EquipmentNode *node = FindNodeByCodeConst(inventory, code);
+    return node ? &node->equipment : NULL;
 }
 
-void ProgTP_EquipmentInventoryVisitArray(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentVisitor visitor, void *user_data) {
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        if (!visitor(&inventory->array.items[i], user_data)) {
+void ProgTP_EquipmentInventoryForEach(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentVisitor visitor, void *user_data) {
+    const ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (!visitor(&current->equipment, user_data)) {
             return;
         }
+        current = current->next;
     }
 }
 
-void ProgTP_EquipmentInventoryVisitByType(const ProgTP_EquipmentInventory *inventory, const char *type, ProgTP_EquipmentVisitor visitor, void *user_data) {
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        if (ProgTP_TextEqualsIgnoreCase(inventory->array.items[i].type, type) && !visitor(&inventory->array.items[i], user_data)) {
+void ProgTP_EquipmentInventoryForEachByType(const ProgTP_EquipmentInventory *inventory, const char *type, ProgTP_EquipmentVisitor visitor, void *user_data) {
+    const ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (ProgTP_TextEqualsIgnoreCase(current->equipment.type, type) && !visitor(&current->equipment, user_data)) {
             return;
         }
+        current = current->next;
     }
 }
 
-void ProgTP_EquipmentInventoryVisitByState(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentState state, ProgTP_EquipmentVisitor visitor, void *user_data) {
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        if (inventory->array.items[i].state == state && !visitor(&inventory->array.items[i], user_data)) {
+void ProgTP_EquipmentInventoryForEachByState(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentState state, ProgTP_EquipmentVisitor visitor, void *user_data) {
+    const ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        if (current->equipment.state == state && !visitor(&current->equipment, user_data)) {
             return;
         }
+        current = current->next;
     }
 }
 
@@ -286,10 +348,18 @@ bool ProgTP_EquipmentInventorySaveBinary(const ProgTP_EquipmentInventory *invent
     memcpy(header.magic, PROGTP_EQUIPMENT_FILE_MAGIC, sizeof(header.magic) - 1u);
     header.version = PROGTP_EQUIPMENT_FILE_VERSION;
     header.next_code = inventory->next_code;
-    header.count = (uint64_t)inventory->array.length;
+    header.count = (uint64_t)inventory->length;
+
     bool ok = fwrite(&header, sizeof(header), 1u, file) == 1u;
-    if (ok && inventory->array.length > 0) {
-        ok = fwrite(inventory->array.items, sizeof(*inventory->array.items), inventory->array.length, file) == inventory->array.length;
+    if (ok) {
+        const ProgTP_EquipmentNode *current = inventory->head;
+        while (current) {
+            if (fwrite(&current->equipment, sizeof(current->equipment), 1u, file) != 1u) {
+                ok = false;
+                break;
+            }
+            current = current->next;
+        }
     }
     if (fclose(file) != 0) {
         ok = false;
@@ -318,23 +388,33 @@ bool ProgTP_EquipmentInventoryLoadBinary(ProgTP_EquipmentInventory *inventory, c
     ProgTP_EquipmentInventory loaded;
     ProgTP_EquipmentInventoryInit(&loaded);
     loaded.next_code = header.next_code == 0 ? 1u : header.next_code;
-    if (header.count > 0) {
-        if (header.count > (uint64_t)(SIZE_MAX / sizeof(ProgTP_Equipment)) ||
-            !EnsureArrayCapacity(&loaded.array, (size_t)header.count)) {
-            fclose(file);
-            ProgTP_EquipmentInventoryDestroy(&loaded);
-            ProgTP_SetError(error, error_size, "not enough memory to load equipment inventory");
-            return false;
-        }
-        loaded.array.length = (size_t)header.count;
-        if (fread(loaded.array.items, sizeof(*loaded.array.items), loaded.array.length, file) != loaded.array.length) {
+
+    ProgTP_EquipmentNode **tail_ptr = &loaded.head;
+    for (uint64_t i = 0; i < header.count; ++i) {
+        ProgTP_EquipmentNode *node = calloc(1u, sizeof(*node));
+        if (!node || fread(&node->equipment, sizeof(node->equipment), 1u, file) != 1u) {
+            free(node);
             fclose(file);
             ProgTP_EquipmentInventoryDestroy(&loaded);
             ProgTP_SetError(error, error_size, "failed to read equipment inventory records");
             return false;
         }
+        node->next = NULL;
+        node->equipment.name[sizeof(node->equipment.name) - 1u] = '\0';
+        node->equipment.type[sizeof(node->equipment.type) - 1u] = '\0';
+        node->equipment.brand[sizeof(node->equipment.brand) - 1u] = '\0';
+        node->equipment.model[sizeof(node->equipment.model) - 1u] = '\0';
+        node->equipment.ip_address[sizeof(node->equipment.ip_address) - 1u] = '\0';
+        node->equipment.mac_address[sizeof(node->equipment.mac_address) - 1u] = '\0';
+        node->equipment.location[sizeof(node->equipment.location) - 1u] = '\0';
+        node->equipment.last_checked[sizeof(node->equipment.last_checked) - 1u] = '\0';
+        *tail_ptr = node;
+        tail_ptr = &node->next;
+        loaded.tail = node;
     }
+    loaded.length = (size_t)header.count;
     fclose(file);
+
     ProgTP_EquipmentInventoryClear(inventory);
     *inventory = loaded;
     return true;
@@ -389,15 +469,22 @@ bool ProgTP_EquipmentInventoryReplace(
 
     ProgTP_EquipmentInventory loaded;
     ProgTP_EquipmentInventoryInit(&loaded);
-    if (count > 0) {
-        if (!EnsureArrayCapacity(&loaded.array, count)) {
+
+    ProgTP_EquipmentNode **tail_ptr = &loaded.head;
+    for (size_t i = 0; i < count; ++i) {
+        ProgTP_EquipmentNode *node = calloc(1u, sizeof(*node));
+        if (!node) {
             ProgTP_EquipmentInventoryDestroy(&loaded);
             ProgTP_SetError(error, error_size, "not enough memory to replace equipment inventory");
             return false;
         }
-        memcpy(loaded.array.items, items, count * sizeof(*items));
-        loaded.array.length = count;
+        node->equipment = items[i];
+        node->next = NULL;
+        *tail_ptr = node;
+        tail_ptr = &node->next;
+        loaded.tail = node;
     }
+    loaded.length = count;
     loaded.next_code = next_code > max_code ? next_code : max_code + 1u;
     if (loaded.next_code == 0) {
         loaded.next_code = 1;
@@ -421,24 +508,35 @@ bool ProgTP_EquipmentInventoryApplySnapshot(
         ProgTP_SetError(error, error_size, "snapshot has no equipment code");
         return false;
     }
-    size_t index = FindIndexByCode(inventory, snapshot->code);
-    if (index == (size_t)-1) {
-        if (!EnsureArrayCapacity(&inventory->array, inventory->array.length + 1u)) {
+
+    ProgTP_EquipmentNode *existing = FindNodeByCode(inventory, snapshot->code);
+    if (existing) {
+        existing->equipment = *snapshot;
+    } else {
+        ProgTP_EquipmentNode *node = calloc(1u, sizeof(*node));
+        if (!node) {
             ProgTP_SetError(error, error_size, "not enough memory to restore equipment");
             return false;
         }
-        inventory->array.items[inventory->array.length++] = *snapshot;
+        node->equipment = *snapshot;
+        node->next = NULL;
+        if (!inventory->tail) {
+            inventory->head = node;
+            inventory->tail = node;
+        } else {
+            inventory->tail->next = node;
+            inventory->tail = node;
+        }
+        ++inventory->length;
         if (inventory->next_code <= snapshot->code) {
             inventory->next_code = snapshot->code + 1u;
         }
-    } else {
-        inventory->array.items[index] = *snapshot;
     }
     return true;
 }
 
 void ProgTP_EquipmentInventorySeedDefaults(ProgTP_EquipmentInventory *inventory) {
-    if (inventory->array.length > 0) {
+    if (inventory->length > 0) {
         return;
     }
     const ProgTP_EquipmentInput defaults[] = {
@@ -459,19 +557,21 @@ void ProgTP_EquipmentInventorySummary(const ProgTP_EquipmentInventory *inventory
     size_t failed = 0;
     size_t maintenance = 0;
     size_t disabled = 0;
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        switch (inventory->array.items[i].state) {
+    const ProgTP_EquipmentNode *current = inventory->head;
+    while (current) {
+        switch (current->equipment.state) {
             case PROGTP_EQUIPMENT_OPERATIONAL: ++operational; break;
             case PROGTP_EQUIPMENT_FAILED: ++failed; break;
             case PROGTP_EQUIPMENT_MAINTENANCE: ++maintenance; break;
             case PROGTP_EQUIPMENT_DISABLED: ++disabled; break;
         }
+        current = current->next;
     }
     snprintf(
         buffer,
         buffer_size,
         "Module 1 inventory: %zu equipment (%zu operational, %zu failed, %zu maintenance, %zu disabled)",
-        inventory->array.length,
+        inventory->length,
         operational,
         failed,
         maintenance,
@@ -525,4 +625,3 @@ bool ProgTP_EquipmentStateFromString(const char *value, ProgTP_EquipmentState *s
     }
     return false;
 }
-

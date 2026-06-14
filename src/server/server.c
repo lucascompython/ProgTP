@@ -312,10 +312,10 @@ static void OnApiIncidents(fio_http_s *request) {
             case PROGTP_INCIDENT_OP_CREATE: {
                 ProgTP_Incident incident = op_request.incident;
                 incident.number = 0;
-                ok = ProgTP_IncidentStoreAppend(&store, &incident, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error));
+                ok = ProgTP_IncidentStoreEnqueue(&store, &incident, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error));
                 if (ok) {
                     op_response.success = true;
-                    op_response.incident_number = store.items[store.length - 1u].number;
+                    op_response.incident_number = ProgTP_IncidentStoreGetByIndex(&store, ProgTP_IncidentStoreGetCount(&store) - 1u)->number;
                     snprintf(op_response.message, sizeof(op_response.message), "Incident #%u created", op_response.incident_number);
                 }
                 break;
@@ -329,7 +329,7 @@ static void OnApiIncidents(fio_http_s *request) {
                 }
                 break;
             case PROGTP_INCIDENT_OP_DELETE:
-                ok = ProgTP_IncidentStoreDelete(&store, op_request.incident.number, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error));
+                ok = ProgTP_IncidentStoreDequeue(&store, op_request.incident.number, PROGTP_SERVER_INCIDENT_PATH, error, sizeof(error));
                 if (ok) {
                     op_response.success = true;
                     op_response.incident_number = op_request.incident.number;
@@ -435,7 +435,7 @@ static void OnApiConfig(fio_http_s *request) {
                 snprintf(op_response.message, sizeof(op_response.message), "Imported config history from %.280s", import_path);
             }
         } else if (op_request.operation == PROGTP_CONFIG_OP_DELETE) {
-            ok = ProgTP_ConfigHistoryDeleteById(&history, op_request.entry_id, error, sizeof(error));
+            ok = ProgTP_ConfigHistoryPop(&history, op_request.entry_id, error, sizeof(error));
             if (ok) {
                 snprintf(op_response.message, sizeof(op_response.message), "Removed config entry #%u", op_request.entry_id);
             }

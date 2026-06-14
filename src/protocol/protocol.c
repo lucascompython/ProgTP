@@ -89,12 +89,13 @@ static const char *ConfigEntryStateName(ProgTP_ConfigEntryState state);
 static yyjson_mut_val *ConfigHistoryToJsonValue(yyjson_mut_doc *doc, const ProgTP_ConfigHistory *history) {
     yyjson_mut_val *root = yyjson_mut_obj(doc);
     yyjson_mut_obj_add_uint(doc, root, "next_id", history ? history->next_id : 1u);
-    yyjson_mut_obj_add_uint(doc, root, "undo_index", (uint32_t)(history ? history->undo_index : 0u));
+    yyjson_mut_obj_add_uint(doc, root, "undo_count", (uint32_t)(history ? history->undo_count : 0u));
     yyjson_mut_val *entries = yyjson_mut_arr(doc);
     yyjson_mut_obj_add_val(doc, root, "entries", entries);
     if (history) {
-        for (size_t i = 0; i < history->length; ++i) {
-            const ProgTP_ConfigEntry *entry = &history->items[i];
+        size_t count = ProgTP_ConfigHistoryGetCount(history);
+        for (size_t i = 0; i < count; ++i) {
+            const ProgTP_ConfigEntry *entry = ProgTP_ConfigHistoryGetByIndex(history, i);
             yyjson_mut_val *obj = yyjson_mut_obj(doc);
             yyjson_mut_arr_add_val(entries, obj);
             yyjson_mut_obj_add_uint(doc, obj, "id", entry->id);
@@ -252,7 +253,7 @@ bool ProgTP_ConfigHistoryFromJson(
     yyjson_val *root = yyjson_doc_get_root(doc);
     yyjson_val *entries_value = yyjson_obj_get(root, "entries");
     yyjson_val *next_id_value = yyjson_obj_get(root, "next_id");
-    yyjson_val *undo_index_value = yyjson_obj_get(root, "undo_index");
+    yyjson_val *undo_count_value = yyjson_obj_get(root, "undo_count");
     if (!yyjson_is_obj(root) || !yyjson_is_arr(entries_value)) {
         yyjson_doc_free(doc);
         ProgTP_SetError(error, error_size, "config history JSON must contain entries array");
@@ -291,21 +292,21 @@ bool ProgTP_ConfigHistoryFromJson(
             return false;
         }
         char err[256] = {0};
-        if (!ProgTP_ConfigHistoryRecord(history, item.op_type, &item.before, &item.after, item.description, err, sizeof(err))) {
+        if (!ProgTP_ConfigHistoryPush(history, item.op_type, &item.before, &item.after, item.description, err, sizeof(err))) {
             yyjson_doc_free(doc);
             ProgTP_SetError(error, error_size, err[0] ? err : "config history append failed");
             return false;
         }
-        size_t last_index = history->length - 1u;
-        if (item.entry_state == PROGTP_CONFIG_ENTRY_UNDONE) {
-            history->items[last_index].entry_state = PROGTP_CONFIG_ENTRY_UNDONE;
-            if (history->undo_index > 0) {
-                --history->undo_index;
+        if (item.entry_state == PROGTP_CONFIG_ENTRY_UNDONE && history->length > 0) {
+            ProgTP_ConfigEntry *top = ProgTP_ConfigHistoryGetByIndexMut(history, 0u);
+            if (top) {
+                top->entry_state = PROGTP_CONFIG_ENTRY_UNDONE;
+                ++history->undo_count;
             }
         }
     }
-    if (yyjson_is_uint(undo_index_value) && yyjson_get_uint(undo_index_value) <= history->length) {
-        history->undo_index = (size_t)yyjson_get_uint(undo_index_value);
+    if (yyjson_is_uint(undo_count_value) && yyjson_get_uint(undo_count_value) <= history->length) {
+        history->undo_count = (size_t)yyjson_get_uint(undo_count_value);
     }
     yyjson_doc_free(doc);
     return true;
@@ -468,8 +469,8 @@ char *ProgTP_EquipmentInventoryToJson(const ProgTP_EquipmentInventory *inventory
 
     yyjson_mut_val *items = yyjson_mut_arr(doc);
     yyjson_mut_obj_add_val(doc, root, "equipment", items);
-    for (size_t i = 0; i < inventory->array.length; ++i) {
-        const ProgTP_Equipment *equipment = &inventory->array.items[i];
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(inventory); ++i) {
+        const ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryGetByIndex(inventory, i);
         yyjson_mut_val *item = yyjson_mut_obj(doc);
         yyjson_mut_arr_add_val(items, item);
         yyjson_mut_obj_add_uint(doc, item, "code", equipment->code);
@@ -920,8 +921,9 @@ char *ProgTP_IncidentStoreToJson(const ProgTP_IncidentStore *store, size_t *json
     yyjson_mut_val *items = yyjson_mut_arr(doc);
     yyjson_mut_obj_add_val(doc, root, "incidents", items);
     if (store) {
-        for (size_t i = 0; i < store->length; ++i) {
-            const ProgTP_Incident *incident = &store->items[i];
+        size_t count = ProgTP_IncidentStoreGetCount(store);
+        for (size_t i = 0; i < count; ++i) {
+            const ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndex(store, i);
             yyjson_mut_val *item = yyjson_mut_obj(doc);
             yyjson_mut_arr_add_val(items, item);
             yyjson_mut_obj_add_uint(doc, item, "number", incident->number);
@@ -989,18 +991,11 @@ bool ProgTP_IncidentStoreFromJson(
         if (!yyjson_is_str(state_value) || !IncidentStateFromString(yyjson_get_str(state_value), &incident.state)) {
             incident.state = PROGTP_INCIDENT_PENDING;
         }
-        if (store->capacity < store->length + 1u) {
-            size_t capacity = store->capacity == 0 ? 16u : store->capacity * 2u;
-            ProgTP_Incident *items = realloc(store->items, capacity * sizeof(*items));
-            if (!items) {
-                yyjson_doc_free(doc);
-                ProgTP_SetError(error, error_size, "not enough memory for incidents");
-                return false;
-            }
-            store->items = items;
-            store->capacity = capacity;
+        if (!ProgTP_IncidentStoreAdd(store, &incident)) {
+            yyjson_doc_free(doc);
+            ProgTP_SetError(error, error_size, "not enough memory for incidents");
+            return false;
         }
-        store->items[store->length++] = incident;
     }
     yyjson_doc_free(doc);
     return true;

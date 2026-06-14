@@ -36,11 +36,19 @@ void ProgTP_IncidentStoreInit(ProgTP_IncidentStore *store) {
 }
 
 void ProgTP_IncidentStoreDestroy(ProgTP_IncidentStore *store) {
-    free(store->items);
+    ProgTP_IncidentStoreClear(store);
     memset(store, 0, sizeof(*store));
 }
 
 void ProgTP_IncidentStoreClear(ProgTP_IncidentStore *store) {
+    ProgTP_IncidentNode *current = store->front;
+    while (current) {
+        ProgTP_IncidentNode *next = current->next;
+        free(current);
+        current = next;
+    }
+    store->front = NULL;
+    store->rear = NULL;
     store->length = 0;
 }
 
@@ -49,42 +57,73 @@ bool ProgTP_IncidentStoreCopy(ProgTP_IncidentStore *destination, const ProgTP_In
         ProgTP_SetError(error, error_size, "missing destination incident store");
         return false;
     }
-    free(destination->items);
-    destination->items = NULL;
-    destination->length = 0;
-    destination->capacity = 0;
+    ProgTP_IncidentStoreClear(destination);
     if (source && source->length > 0) {
-        destination->items = calloc(source->length, sizeof(*destination->items));
-        if (!destination->items) {
-            ProgTP_SetError(error, error_size, "not enough memory for incident copy");
-            return false;
+        ProgTP_IncidentNode **tail_ptr = &destination->front;
+        const ProgTP_IncidentNode *current = source->front;
+        while (current) {
+            ProgTP_IncidentNode *node = calloc(1u, sizeof(*node));
+            if (!node) {
+                ProgTP_IncidentStoreClear(destination);
+                ProgTP_SetError(error, error_size, "not enough memory for incident copy");
+                return false;
+            }
+            node->incident = current->incident;
+            node->next = NULL;
+            *tail_ptr = node;
+            tail_ptr = &node->next;
+            destination->rear = node;
+            current = current->next;
         }
-        memcpy(destination->items, source->items, source->length * sizeof(*destination->items));
-        destination->capacity = source->length;
         destination->length = source->length;
     }
     return true;
 }
 
-static bool EnsureCapacity(ProgTP_IncidentStore *store, size_t minimum, char *error, size_t error_size) {
-    if (store->capacity >= minimum) {
-        return true;
+size_t ProgTP_IncidentStoreGetCount(const ProgTP_IncidentStore *store) {
+    return store ? store->length : 0u;
+}
+
+const ProgTP_Incident *ProgTP_IncidentStoreGetByIndex(const ProgTP_IncidentStore *store, size_t index) {
+    if (!store || index >= store->length) {
+        return NULL;
     }
-    size_t capacity = store->capacity == 0 ? 16u : store->capacity;
-    while (capacity < minimum) {
-        if (capacity > SIZE_MAX / 2u) {
-            ProgTP_SetError(error, error_size, "incident store is too large");
-            return false;
-        }
-        capacity *= 2u;
+    const ProgTP_IncidentNode *current = store->front;
+    for (size_t i = 0; i < index && current; ++i) {
+        current = current->next;
     }
-    ProgTP_Incident *items = realloc(store->items, capacity * sizeof(*items));
-    if (!items) {
-        ProgTP_SetError(error, error_size, "not enough memory for incidents");
+    return current ? &current->incident : NULL;
+}
+
+ProgTP_Incident *ProgTP_IncidentStoreGetByIndexMut(ProgTP_IncidentStore *store, size_t index) {
+    if (!store || index >= store->length) {
+        return NULL;
+    }
+    ProgTP_IncidentNode *current = store->front;
+    for (size_t i = 0; i < index && current; ++i) {
+        current = current->next;
+    }
+    return current ? &current->incident : NULL;
+}
+
+bool ProgTP_IncidentStoreAdd(ProgTP_IncidentStore *store, const ProgTP_Incident *incident) {
+    if (!store || !incident) {
         return false;
     }
-    store->items = items;
-    store->capacity = capacity;
+    ProgTP_IncidentNode *node = calloc(1u, sizeof(*node));
+    if (!node) {
+        return false;
+    }
+    node->incident = *incident;
+    node->next = NULL;
+    if (!store->rear) {
+        store->front = node;
+        store->rear = node;
+    } else {
+        store->rear->next = node;
+        store->rear = node;
+    }
+    ++store->length;
     return true;
 }
 
@@ -111,26 +150,30 @@ bool ProgTP_IncidentStoreLoad(ProgTP_IncidentStore *store, const char *path, cha
         ProgTP_SetError(error, error_size, "invalid incident binary file");
         return false;
     }
-    if (!EnsureCapacity(store, (size_t)header.count, error, error_size)) {
-        fclose(file);
-        return false;
-    }
-    if (header.count > 0 &&
-        fread(store->items, sizeof(store->items[0]), (size_t)header.count, file) != (size_t)header.count) {
-        fclose(file);
-        ProgTP_SetError(error, error_size, "could not read incident binary file");
-        return false;
+
+    ProgTP_IncidentNode **tail_ptr = &store->front;
+    for (uint64_t i = 0; i < header.count; ++i) {
+        ProgTP_IncidentNode *node = calloc(1u, sizeof(*node));
+        if (!node || fread(&node->incident, sizeof(node->incident), 1u, file) != 1u) {
+            free(node);
+            fclose(file);
+            ProgTP_IncidentStoreClear(store);
+            ProgTP_SetError(error, error_size, "could not read incident binary file");
+            return false;
+        }
+        node->next = NULL;
+        node->incident.source[sizeof(node->incident.source) - 1u] = '\0';
+        node->incident.type[sizeof(node->incident.type) - 1u] = '\0';
+        node->incident.description[sizeof(node->incident.description) - 1u] = '\0';
+        node->incident.priority[sizeof(node->incident.priority) - 1u] = '\0';
+        node->incident.created_at[sizeof(node->incident.created_at) - 1u] = '\0';
+        node->incident.completed_at[sizeof(node->incident.completed_at) - 1u] = '\0';
+        node->incident.technician[sizeof(node->incident.technician) - 1u] = '\0';
+        *tail_ptr = node;
+        tail_ptr = &node->next;
+        store->rear = node;
     }
     store->length = (size_t)header.count;
-    for (size_t i = 0; i < store->length; ++i) {
-        store->items[i].source[sizeof(store->items[i].source) - 1u] = '\0';
-        store->items[i].type[sizeof(store->items[i].type) - 1u] = '\0';
-        store->items[i].description[sizeof(store->items[i].description) - 1u] = '\0';
-        store->items[i].priority[sizeof(store->items[i].priority) - 1u] = '\0';
-        store->items[i].created_at[sizeof(store->items[i].created_at) - 1u] = '\0';
-        store->items[i].completed_at[sizeof(store->items[i].completed_at) - 1u] = '\0';
-        store->items[i].technician[sizeof(store->items[i].technician) - 1u] = '\0';
-    }
     fclose(file);
     return true;
 }
@@ -149,11 +192,19 @@ bool ProgTP_IncidentStoreSave(const ProgTP_IncidentStore *store, const char *pat
     memset(&header, 0, sizeof(header));
     memcpy(header.magic, PROGTP_INCIDENT_FILE_MAGIC, sizeof(header.magic) - 1u);
     header.version = PROGTP_INCIDENT_FILE_VERSION;
-    header.next_number = store->length > 0 ? store->items[store->length - 1u].number + 1u : 1u;
+    header.next_number = store->rear ? store->rear->incident.number + 1u : 1u;
     header.count = (uint64_t)store->length;
+
     bool ok = fwrite(&header, sizeof(header), 1u, file) == 1u;
-    if (ok && store->length > 0) {
-        ok = fwrite(store->items, sizeof(store->items[0]), store->length, file) == store->length;
+    if (ok) {
+        const ProgTP_IncidentNode *current = store->front;
+        while (current) {
+            if (fwrite(&current->incident, sizeof(current->incident), 1u, file) != 1u) {
+                ok = false;
+                break;
+            }
+            current = current->next;
+        }
     }
     ok = fclose(file) == 0 && ok;
     if (!ok) {
@@ -162,7 +213,7 @@ bool ProgTP_IncidentStoreSave(const ProgTP_IncidentStore *store, const char *pat
     return ok;
 }
 
-bool ProgTP_IncidentStoreAppend(
+bool ProgTP_IncidentStoreEnqueue(
     ProgTP_IncidentStore *store,
     const ProgTP_Incident *incident,
     const char *path,
@@ -172,14 +223,25 @@ bool ProgTP_IncidentStoreAppend(
         ProgTP_SetError(error, error_size, "missing incident store, incident, or path");
         return false;
     }
-    if (!EnsureCapacity(store, store->length + 1u, error, error_size)) {
+    ProgTP_IncidentNode *node = calloc(1u, sizeof(*node));
+    if (!node) {
+        ProgTP_SetError(error, error_size, "not enough memory for incident");
         return false;
     }
-    ProgTP_Incident new_incident = *incident;
-    if (new_incident.number == 0) {
-        new_incident.number = store->length > 0 ? store->items[store->length - 1u].number + 1u : 1u;
+    node->incident = *incident;
+    if (node->incident.number == 0) {
+        node->incident.number = store->rear ? store->rear->incident.number + 1u : 1u;
     }
-    store->items[store->length++] = new_incident;
+    node->next = NULL;
+
+    if (!store->rear) {
+        store->front = node;
+        store->rear = node;
+    } else {
+        store->rear->next = node;
+        store->rear = node;
+    }
+    ++store->length;
     return ProgTP_IncidentStoreSave(store, path, error, error_size);
 }
 
@@ -194,19 +256,23 @@ bool ProgTP_IncidentStoreUpdate(
         ProgTP_SetError(error, error_size, "missing incident store, incident, or path");
         return false;
     }
-    for (size_t i = 0; i < store->length; ++i) {
-        if (store->items[i].number == number) {
-            uint32_t original_number = store->items[i].number;
-            store->items[i] = *updated;
-            store->items[i].number = original_number;
+    ProgTP_IncidentNode *prev = NULL;
+    ProgTP_IncidentNode *current = store->front;
+    while (current) {
+        if (current->incident.number == number) {
+            uint32_t original_number = current->incident.number;
+            current->incident = *updated;
+            current->incident.number = original_number;
             return ProgTP_IncidentStoreSave(store, path, error, error_size);
         }
+        prev = current;
+        current = current->next;
     }
     ProgTP_SetError(error, error_size, "incident not found");
     return false;
 }
 
-bool ProgTP_IncidentStoreDelete(
+bool ProgTP_IncidentStoreDequeue(
     ProgTP_IncidentStore *store,
     uint32_t number,
     const char *path,
@@ -216,12 +282,24 @@ bool ProgTP_IncidentStoreDelete(
         ProgTP_SetError(error, error_size, "missing incident store or path");
         return false;
     }
-    for (size_t i = 0; i < store->length; ++i) {
-        if (store->items[i].number == number) {
-            memmove(&store->items[i], &store->items[i + 1u], (store->length - i - 1u) * sizeof(store->items[0]));
+    ProgTP_IncidentNode *prev = NULL;
+    ProgTP_IncidentNode *current = store->front;
+    while (current) {
+        if (current->incident.number == number) {
+            if (prev) {
+                prev->next = current->next;
+            } else {
+                store->front = current->next;
+            }
+            if (current == store->rear) {
+                store->rear = prev;
+            }
+            free(current);
             --store->length;
             return ProgTP_IncidentStoreSave(store, path, error, error_size);
         }
+        prev = current;
+        current = current->next;
     }
     ProgTP_SetError(error, error_size, "incident not found");
     return false;
@@ -231,10 +309,12 @@ const ProgTP_Incident *ProgTP_IncidentStoreFind(const ProgTP_IncidentStore *stor
     if (!store) {
         return NULL;
     }
-    for (size_t i = 0; i < store->length; ++i) {
-        if (store->items[i].number == number) {
-            return &store->items[i];
+    const ProgTP_IncidentNode *current = store->front;
+    while (current) {
+        if (current->incident.number == number) {
+            return &current->incident;
         }
+        current = current->next;
     }
     return NULL;
 }
@@ -313,7 +393,7 @@ bool ProgTP_IncidentStoreImportFromMonitoringLog(
         snprintf(incident.priority, sizeof(incident.priority), "%s", "High");
         snprintf(incident.created_at, sizeof(incident.created_at), "%s", fields[0] ? fields[0] : "");
         incident.state = PROGTP_INCIDENT_PENDING;
-        if (!ProgTP_IncidentStoreAppend(store, &incident, incident_path, error, error_size)) {
+        if (!ProgTP_IncidentStoreEnqueue(store, &incident, incident_path, error, error_size)) {
             fclose(file);
             return false;
         }

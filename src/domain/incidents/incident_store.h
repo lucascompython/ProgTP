@@ -32,10 +32,15 @@ typedef struct {
     ProgTP_IncidentState state;
 } ProgTP_Incident;
 
+typedef struct ProgTP_IncidentNode {
+    ProgTP_Incident incident;
+    struct ProgTP_IncidentNode *next;
+} ProgTP_IncidentNode;
+
 typedef struct {
-    ProgTP_Incident *items;
+    ProgTP_IncidentNode *front;
+    ProgTP_IncidentNode *rear;
     size_t length;
-    size_t capacity;
 } ProgTP_IncidentStore;
 
 void ProgTP_IncidentStoreInit(ProgTP_IncidentStore *store);
@@ -43,10 +48,16 @@ void ProgTP_IncidentStoreDestroy(ProgTP_IncidentStore *store);
 void ProgTP_IncidentStoreClear(ProgTP_IncidentStore *store);
 bool ProgTP_IncidentStoreCopy(ProgTP_IncidentStore *destination, const ProgTP_IncidentStore *source, char *error, size_t error_size);
 
+size_t ProgTP_IncidentStoreGetCount(const ProgTP_IncidentStore *store);
+const ProgTP_Incident *ProgTP_IncidentStoreGetByIndex(const ProgTP_IncidentStore *store, size_t index);
+ProgTP_Incident *ProgTP_IncidentStoreGetByIndexMut(ProgTP_IncidentStore *store, size_t index);
+
+bool ProgTP_IncidentStoreAdd(ProgTP_IncidentStore *store, const ProgTP_Incident *incident);
+
 bool ProgTP_IncidentStoreLoad(ProgTP_IncidentStore *store, const char *path, char *error, size_t error_size);
 bool ProgTP_IncidentStoreSave(const ProgTP_IncidentStore *store, const char *path, char *error, size_t error_size);
 
-bool ProgTP_IncidentStoreAppend(
+bool ProgTP_IncidentStoreEnqueue(
     ProgTP_IncidentStore *store,
     const ProgTP_Incident *incident,
     const char *path,
@@ -61,7 +72,7 @@ bool ProgTP_IncidentStoreUpdate(
     char *error,
     size_t error_size);
 
-bool ProgTP_IncidentStoreDelete(
+bool ProgTP_IncidentStoreDequeue(
     ProgTP_IncidentStore *store,
     uint32_t number,
     const char *path,

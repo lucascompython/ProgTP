@@ -107,12 +107,12 @@ ProgTP_Equipment *SelectedEquipment(ProgTP_AppState *state) {
 }
 
 void EnsureSelection(ProgTP_AppState *state) {
-    if (state->inventory.array.length == 0) {
+    if (ProgTP_EquipmentInventoryGetCount(&state->inventory) == 0) {
         state->selected_code = 0;
         return;
     }
     if (!SelectedEquipment(state)) {
-        state->selected_code = state->inventory.array.items[0].code;
+        state->selected_code = ProgTP_EquipmentInventoryGetByIndex(&state->inventory, 0)->code;
     }
 }
 
@@ -410,12 +410,12 @@ void ProgTP_AppCompleteConfigOperation(ProgTP_AppState *state, const ProgTP_Conf
     }
     state->config_operation_result = *response;
     state->config_operation_in_flight = false;
-    if (response->success && response->history.length > 0) {
+    if (response->success && ProgTP_ConfigHistoryGetCount(&response->history) > 0) {
         char copy_error[256] = {0};
         if (ProgTP_ConfigHistoryCopy(&state->config_history, &response->history, copy_error, sizeof(copy_error))) {
             state->config_row_offset = 0;
-            state->selected_config_index = state->config_history.length > 0
-                ? state->config_history.length - 1u
+            state->selected_config_index = ProgTP_ConfigHistoryGetCount(&state->config_history) > 0
+                ? ProgTP_ConfigHistoryGetCount(&state->config_history) - 1u
                 : 0u;
         } else {
             snprintf(state->status, sizeof(state->status), "Config copy failed: %s", copy_error);
@@ -447,7 +447,7 @@ void ProgTP_AppRecordConfigChange(
         return;
     }
     char error[256] = {0};
-    if (!ProgTP_ConfigHistoryRecord(&state->config_history, op_type, before, after, description, error, sizeof(error))) {
+    if (!ProgTP_ConfigHistoryPush(&state->config_history, op_type, before, after, description, error, sizeof(error))) {
         snprintf(state->status, sizeof(state->status), "Config record failed: %s", error);
         return;
     }
@@ -680,7 +680,7 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_CONNECTIVITY_NEXT_TARGET: MoveInventorySelection(state, 1); break;
         case PROGTP_APP_ACTION_CONNECTIVITY_PAGE_PREVIOUS:
             if (state->connectivity_row_offset == 0) {
-                size_t count = state->inventory.array.length;
+                size_t count = ProgTP_EquipmentInventoryGetCount(&state->inventory);
                 state->connectivity_row_offset = count == 0 ? 0 : ((count - 1u) / PROGTP_VISIBLE_ROWS) * PROGTP_VISIBLE_ROWS;
             } else {
                 state->connectivity_row_offset = state->connectivity_row_offset > PROGTP_VISIBLE_ROWS
@@ -689,9 +689,9 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             }
             break;
         case PROGTP_APP_ACTION_CONNECTIVITY_PAGE_NEXT:
-            if (state->inventory.array.length > PROGTP_VISIBLE_ROWS) {
+            if (ProgTP_EquipmentInventoryGetCount(&state->inventory) > PROGTP_VISIBLE_ROWS) {
                 size_t next = state->connectivity_row_offset + PROGTP_VISIBLE_ROWS;
-                state->connectivity_row_offset = next < state->inventory.array.length ? next : 0;
+                state->connectivity_row_offset = next < ProgTP_EquipmentInventoryGetCount(&state->inventory) ? next : 0;
             }
             break;
         case PROGTP_APP_ACTION_SENSOR_IMPORT: QueueSensorImportRequest(state); break;
@@ -793,8 +793,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             OpenRemoveIncidentModal(state);
             break;
         case PROGTP_APP_ACTION_INCIDENT_START:
-            if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
-                ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+            if (ProgTP_IncidentStoreGetCount(&state->incidents) > 0 && state->selected_incident_index < ProgTP_IncidentStoreGetCount(&state->incidents)) {
+                ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndexMut(&state->incidents, state->selected_incident_index);
                 incident->state = PROGTP_INCIDENT_IN_PROGRESS;
                 char save_error[128] = {0};
                 if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
@@ -805,8 +805,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             }
             break;
         case PROGTP_APP_ACTION_INCIDENT_COMPLETE:
-            if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
-                ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+            if (ProgTP_IncidentStoreGetCount(&state->incidents) > 0 && state->selected_incident_index < ProgTP_IncidentStoreGetCount(&state->incidents)) {
+                ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndexMut(&state->incidents, state->selected_incident_index);
                 incident->state = PROGTP_INCIDENT_COMPLETED;
                 ProgTP_FormatCurrentTimestamp(incident->completed_at, sizeof(incident->completed_at));
                 char save_error[128] = {0};
@@ -862,11 +862,12 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 snprintf(state->status, sizeof(state->status), "Undo failed: %s", error);
             } else {
                 state->config_row_offset = 0;
-                if (state->config_history.undo_index < state->config_history.length &&
-                    state->config_history.items[state->config_history.undo_index].id > 0) {
-                    state->selected_config_index = state->config_history.undo_index;
-                } else if (state->config_history.undo_index > 0) {
-                    state->selected_config_index = state->config_history.undo_index - 1u;
+                size_t config_count = ProgTP_ConfigHistoryGetCount(&state->config_history);
+                if (state->config_history.undo_count < config_count &&
+                    ProgTP_ConfigHistoryGetByIndex(&state->config_history, state->config_history.undo_count)->id > 0) {
+                    state->selected_config_index = state->config_history.undo_count;
+                } else if (state->config_history.undo_count > 0) {
+                    state->selected_config_index = state->config_history.undo_count - 1u;
                 }
                 EnsureSelection(state);
                 state->inventory_dirty = true;
@@ -888,8 +889,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 snprintf(state->status, sizeof(state->status), "Redo failed: %s", error);
             } else {
                 state->config_row_offset = 0;
-                if (state->config_history.undo_index > 0) {
-                    state->selected_config_index = state->config_history.undo_index - 1u;
+                if (state->config_history.undo_count > 0) {
+                    state->selected_config_index = state->config_history.undo_count - 1u;
                 }
                 EnsureSelection(state);
                 state->inventory_dirty = true;
@@ -1024,7 +1025,7 @@ static void PrepareText(ProgTP_AppState *state) {
             "Shared workspace for the practical assignment modules");
     }
     snprintf(state->title_text, sizeof(state->title_text), "Module %d - %s", state->active_module, ModuleName(state->active_module));
-    snprintf(state->total_metric_text, sizeof(state->total_metric_text), "%zu devices", state->inventory.array.length);
+    snprintf(state->total_metric_text, sizeof(state->total_metric_text), "%zu devices", ProgTP_EquipmentInventoryGetCount(&state->inventory));
     snprintf(state->selected_metric_text, sizeof(state->selected_metric_text), "#%u", state->selected_code);
     snprintf(state->type_filter_text, sizeof(state->type_filter_text), "%s", state->type_filter[0] != '\0' ? state->type_filter : "All types");
     snprintf(

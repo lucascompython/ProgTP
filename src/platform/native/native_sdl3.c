@@ -169,13 +169,24 @@ static int SensorThreadMain(void *user_data) {
 
 static bool CopyInventory(ProgTP_EquipmentInventory *destination, const ProgTP_EquipmentInventory *source, char *error, size_t error_size) {
     ProgTP_EquipmentInventoryInit(destination);
-    return ProgTP_EquipmentInventoryReplace(
-        destination,
-        source->array.items,
-        source->array.length,
-        source->next_code,
-        error,
-        error_size);
+    size_t count = ProgTP_EquipmentInventoryGetCount(source);
+    ProgTP_Equipment *items = NULL;
+    if (count > 0) {
+        items = calloc(count, sizeof(*items));
+        if (!items) {
+            snprintf(error, error_size, "not enough memory to copy inventory");
+            return false;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            const ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryGetByIndex(source, i);
+            if (equipment) {
+                items[i] = *equipment;
+            }
+        }
+    }
+    bool ok = ProgTP_EquipmentInventoryReplace(destination, items, count, source->next_code, error, error_size);
+    free(items);
+    return ok;
 }
 
 static void TransferInventory(ProgTP_EquipmentInventory *destination, ProgTP_EquipmentInventory *source) {

@@ -17,71 +17,23 @@ typedef struct {
     uint32_t version;
     uint32_t next_id;
     uint64_t count;
-    uint64_t undo_index;
+    uint64_t undo_count;
 } ProgTP_ConfigFileHeader;
 
-void ProgTP_ConfigHistoryInit(ProgTP_ConfigHistory *history) {
-    memset(history, 0, sizeof(*history));
-    history->undo_index = 0;
+static ProgTP_ConfigNode *GetNodeAt(ProgTP_ConfigHistory *history, size_t index) {
+    ProgTP_ConfigNode *current = history->top;
+    for (size_t i = 0; i < index && current; ++i) {
+        current = current->next;
+    }
+    return current;
 }
 
-void ProgTP_ConfigHistoryDestroy(ProgTP_ConfigHistory *history) {
-    free(history->items);
-    memset(history, 0, sizeof(*history));
-}
-
-void ProgTP_ConfigHistoryClear(ProgTP_ConfigHistory *history) {
-    history->length = 0;
-    history->undo_index = 0;
-}
-
-bool ProgTP_ConfigHistoryCopy(ProgTP_ConfigHistory *destination, const ProgTP_ConfigHistory *source, char *error, size_t error_size) {
-    if (!destination) {
-        ProgTP_SetError(error, error_size, "missing destination config history");
-        return false;
+static const ProgTP_ConfigNode *GetNodeAtConst(const ProgTP_ConfigHistory *history, size_t index) {
+    const ProgTP_ConfigNode *current = history->top;
+    for (size_t i = 0; i < index && current; ++i) {
+        current = current->next;
     }
-    free(destination->items);
-    destination->items = NULL;
-    destination->length = 0;
-    destination->capacity = 0;
-    destination->next_id = 1;
-    destination->undo_index = 0;
-    if (source && source->length > 0) {
-        destination->items = calloc(source->length, sizeof(*destination->items));
-        if (!destination->items) {
-            ProgTP_SetError(error, error_size, "not enough memory for config history copy");
-            return false;
-        }
-        memcpy(destination->items, source->items, source->length * sizeof(*destination->items));
-        destination->capacity = source->length;
-        destination->length = source->length;
-        destination->next_id = source->next_id;
-        destination->undo_index = source->undo_index;
-    }
-    return true;
-}
-
-static bool EnsureCapacity(ProgTP_ConfigHistory *history, size_t minimum, char *error, size_t error_size) {
-    if (history->capacity >= minimum) {
-        return true;
-    }
-    size_t capacity = history->capacity == 0 ? 8u : history->capacity;
-    while (capacity < minimum) {
-        if (capacity > SIZE_MAX / 2u) {
-            ProgTP_SetError(error, error_size, "config history is too large");
-            return false;
-        }
-        capacity *= 2u;
-    }
-    ProgTP_ConfigEntry *items = realloc(history->items, capacity * sizeof(*items));
-    if (!items) {
-        ProgTP_SetError(error, error_size, "not enough memory for config history");
-        return false;
-    }
-    memset(items + history->length, 0, (capacity - history->length) * sizeof(*items));
-    history->items = items;
-    history->capacity = capacity;
-    return true;
+    return current;
 }
 
 static void NullTerminateEntry(ProgTP_ConfigEntry *entry) {
@@ -104,6 +56,83 @@ static void NullTerminateEntry(ProgTP_ConfigEntry *entry) {
     entry->after.mac_address[sizeof(entry->after.mac_address) - 1u] = '\0';
     entry->after.location[sizeof(entry->after.location) - 1u] = '\0';
     entry->after.last_checked[sizeof(entry->after.last_checked) - 1u] = '\0';
+}
+
+void ProgTP_ConfigHistoryInit(ProgTP_ConfigHistory *history) {
+    memset(history, 0, sizeof(*history));
+}
+
+void ProgTP_ConfigHistoryDestroy(ProgTP_ConfigHistory *history) {
+    free(history->top);
+    memset(history, 0, sizeof(*history));
+}
+
+void ProgTP_ConfigHistoryClear(ProgTP_ConfigHistory *history) {
+    ProgTP_ConfigNode *current = history->top;
+    while (current) {
+        ProgTP_ConfigNode *next = current->next;
+        free(current);
+        current = next;
+    }
+    history->top = NULL;
+    history->length = 0;
+    history->undo_count = 0;
+}
+
+bool ProgTP_ConfigHistoryCopy(ProgTP_ConfigHistory *destination, const ProgTP_ConfigHistory *source, char *error, size_t error_size) {
+    if (!destination) {
+        ProgTP_SetError(error, error_size, "missing destination config history");
+        return false;
+    }
+    ProgTP_ConfigHistoryClear(destination);
+    destination->next_id = 1;
+    if (source && source->length > 0) {
+        ProgTP_ConfigNode *new_top = NULL;
+        ProgTP_ConfigNode *prev = NULL;
+        const ProgTP_ConfigNode *current = source->top;
+        while (current) {
+            ProgTP_ConfigNode *node = calloc(1u, sizeof(*node));
+            if (!node) {
+                ProgTP_ConfigNode *n = new_top;
+                while (n) {
+                    ProgTP_ConfigNode *next = n->next;
+                    free(n);
+                    n = next;
+                }
+                ProgTP_SetError(error, error_size, "not enough memory for config history copy");
+                return false;
+            }
+            node->entry = current->entry;
+            node->next = NULL;
+            if (!new_top) {
+                new_top = node;
+            }
+            if (prev) {
+                prev->next = node;
+            }
+            prev = node;
+            current = current->next;
+        }
+        destination->top = new_top;
+        destination->length = source->length;
+        destination->next_id = source->next_id;
+        destination->undo_count = source->undo_count;
+    }
+    return true;
+}
+
+size_t ProgTP_ConfigHistoryGetCount(const ProgTP_ConfigHistory *history) {
+    return history ? history->length : 0u;
+}
+
+const ProgTP_ConfigEntry *ProgTP_ConfigHistoryGetByIndex(const ProgTP_ConfigHistory *history, size_t index) {
+    const ProgTP_ConfigNode *node = GetNodeAtConst(history, index);
+    return node ? &node->entry : NULL;
+}
+
+ProgTP_ConfigEntry *ProgTP_ConfigHistoryGetByIndexMut(ProgTP_ConfigHistory *history, size_t index) {
+    ProgTP_ConfigNode *node = GetNodeAt(history, index);
+    return node ? &node->entry : NULL;
 }
 
 bool ProgTP_ConfigHistoryLoad(ProgTP_ConfigHistory *history, const char *path, char *error, size_t error_size) {
@@ -129,27 +158,43 @@ bool ProgTP_ConfigHistoryLoad(ProgTP_ConfigHistory *history, const char *path, c
         ProgTP_SetError(error, error_size, "invalid config history binary file");
         return false;
     }
-    if (!EnsureCapacity(history, (size_t)header.count, error, error_size)) {
-        fclose(file);
-        return false;
-    }
-    if (header.count > 0 &&
-        fread(history->items, sizeof(history->items[0]), (size_t)header.count, file) != (size_t)header.count) {
-        fclose(file);
-        ProgTP_SetError(error, error_size, "could not read config history binary file");
-        return false;
-    }
-    history->length = (size_t)header.count;
-    history->next_id = header.next_id == 0 ? 1u : header.next_id;
-    if (header.undo_index > history->length) {
-        history->undo_index = history->length;
-    } else {
-        history->undo_index = (size_t)header.undo_index;
-    }
-    for (size_t i = 0; i < history->length; ++i) {
-        NullTerminateEntry(&history->items[i]);
+
+    ProgTP_ConfigEntry *temp = NULL;
+    size_t count = (size_t)header.count;
+    if (count > 0) {
+        temp = calloc(count, sizeof(*temp));
+        if (!temp || fread(temp, sizeof(*temp), count, file) != count) {
+            free(temp);
+            fclose(file);
+            ProgTP_SetError(error, error_size, "could not read config history binary file");
+            return false;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            NullTerminateEntry(&temp[i]);
+        }
     }
     fclose(file);
+
+    for (size_t i = count; i > 0; --i) {
+        ProgTP_ConfigNode *node = calloc(1u, sizeof(*node));
+        if (!node) {
+            free(temp);
+            ProgTP_ConfigHistoryClear(history);
+            ProgTP_SetError(error, error_size, "not enough memory for config history");
+            return false;
+        }
+        node->entry = temp[i - 1u];
+        node->next = history->top;
+        history->top = node;
+    }
+    free(temp);
+
+    history->length = count;
+    history->next_id = header.next_id == 0 ? 1u : header.next_id;
+    history->undo_count = (size_t)header.undo_count;
+    if (history->undo_count > history->length) {
+        history->undo_count = 0;
+    }
     return true;
 }
 
@@ -169,10 +214,23 @@ bool ProgTP_ConfigHistorySave(const ProgTP_ConfigHistory *history, const char *p
     header.version = PROGTP_CONFIG_FILE_VERSION;
     header.next_id = history->next_id == 0 ? 1u : history->next_id;
     header.count = (uint64_t)history->length;
-    header.undo_index = (uint64_t)history->undo_index;
+    header.undo_count = (uint64_t)history->undo_count;
+
     bool ok = fwrite(&header, sizeof(header), 1u, file) == 1u;
     if (ok && history->length > 0) {
-        ok = fwrite(history->items, sizeof(history->items[0]), history->length, file) == history->length;
+        ProgTP_ConfigEntry *temp = calloc(history->length, sizeof(*temp));
+        if (temp) {
+            size_t idx = 0;
+            const ProgTP_ConfigNode *current = history->top;
+            while (current && idx < history->length) {
+                temp[idx++] = current->entry;
+                current = current->next;
+            }
+            ok = fwrite(temp, sizeof(*temp), history->length, file) == history->length;
+            free(temp);
+        } else {
+            ok = false;
+        }
     }
     ok = fclose(file) == 0 && ok;
     if (!ok) {
@@ -181,7 +239,7 @@ bool ProgTP_ConfigHistorySave(const ProgTP_ConfigHistory *history, const char *p
     return ok;
 }
 
-bool ProgTP_ConfigHistoryRecord(
+bool ProgTP_ConfigHistoryPush(
     ProgTP_ConfigHistory *history,
     ProgTP_ConfigOpType op_type,
     const ProgTP_Equipment *before,
@@ -194,53 +252,75 @@ bool ProgTP_ConfigHistoryRecord(
         return false;
     }
 
-    if (history->undo_index < history->length) {
-        for (size_t i = history->undo_index; i < history->length; ++i) {
-            if (history->items[i].id >= history->next_id) {
-                history->next_id = history->items[i].id + 1u;
-            }
+    while (history->undo_count > 0) {
+        ProgTP_ConfigNode *node = history->top;
+        if (!node) {
+            break;
         }
-        history->length = history->undo_index;
+        if (node->entry.id >= history->next_id) {
+            history->next_id = node->entry.id + 1u;
+        }
+        history->top = node->next;
+        free(node);
+        --history->length;
+        --history->undo_count;
     }
 
     if (history->length >= PROGTP_CONFIG_HISTORY_LIMIT) {
-        size_t shift = history->length - PROGTP_CONFIG_HISTORY_LIMIT + 1u;
-        memmove(
-            &history->items[0],
-            &history->items[shift],
-            (history->length - shift) * sizeof(history->items[0]));
-        history->length -= shift;
-        if (history->undo_index >= shift) {
-            history->undo_index -= shift;
-        } else {
-            history->undo_index = 0;
+        ProgTP_ConfigNode *prev = NULL;
+        ProgTP_ConfigNode *current = history->top;
+        size_t skip = history->length - PROGTP_CONFIG_HISTORY_LIMIT + 1u;
+        size_t traversed = 0;
+        while (current && traversed < history->length - skip) {
+            prev = current;
+            current = current->next;
+            ++traversed;
+        }
+        if (!prev && traversed == 0) {
+            ProgTP_ConfigNode *removed = history->top;
+            if (removed) {
+                history->top = removed->next;
+                free(removed);
+                --history->length;
+            }
+        } else if (prev) {
+            for (size_t i = 0; i < skip && current; ++i) {
+                ProgTP_ConfigNode *next = current->next;
+                free(current);
+                current = next;
+                --history->length;
+            }
+            prev->next = current;
         }
     }
 
-    if (!EnsureCapacity(history, history->length + 1u, error, error_size)) {
+    ProgTP_ConfigNode *node = calloc(1u, sizeof(*node));
+    if (!node) {
+        ProgTP_SetError(error, error_size, "not enough memory for config entry");
         return false;
     }
 
-    ProgTP_ConfigEntry entry;
-    memset(&entry, 0, sizeof(entry));
-    entry.id = history->next_id;
-    entry.equipment_code = after->code;
-    ProgTP_TextCopy(entry.equipment_name, sizeof(entry.equipment_name), after->name);
-    ProgTP_FormatCurrentTimestamp(entry.timestamp, sizeof(entry.timestamp));
-    if (ProgTP_TextIsEmpty(entry.timestamp)) {
-        ProgTP_TextCopy(entry.timestamp, sizeof(entry.timestamp), "unknown");
+    node->entry.id = history->next_id;
+    node->entry.equipment_code = after->code;
+    ProgTP_TextCopy(node->entry.equipment_name, sizeof(node->entry.equipment_name), after->name);
+    ProgTP_FormatCurrentTimestamp(node->entry.timestamp, sizeof(node->entry.timestamp));
+    if (ProgTP_TextIsEmpty(node->entry.timestamp)) {
+        ProgTP_TextCopy(node->entry.timestamp, sizeof(node->entry.timestamp), "unknown");
     }
-    entry.op_type = op_type;
-    ProgTP_TextCopy(entry.description, sizeof(entry.description), description);
+    node->entry.op_type = op_type;
+    ProgTP_TextCopy(node->entry.description, sizeof(node->entry.description), description);
     if (before) {
-        entry.before = *before;
+        node->entry.before = *before;
     }
-    entry.after = *after;
-    entry.entry_state = PROGTP_CONFIG_ENTRY_APPLIED;
-    NullTerminateEntry(&entry);
+    node->entry.after = *after;
+    node->entry.entry_state = PROGTP_CONFIG_ENTRY_APPLIED;
+    NullTerminateEntry(&node->entry);
 
-    history->items[history->length++] = entry;
-    history->undo_index = history->length;
+    node->next = history->top;
+    history->top = node;
+    ++history->length;
+    history->undo_count = 0;
+
     if (history->next_id < UINT32_MAX) {
         ++history->next_id;
     }
@@ -264,23 +344,24 @@ bool ProgTP_ConfigHistoryUndo(
         ProgTP_SetError(error, error_size, "missing config history or inventory");
         return false;
     }
-    if (history->undo_index == 0) {
+    if (!ProgTP_ConfigHistoryCanUndo(history)) {
         ProgTP_SetError(error, error_size, "nothing to undo");
         return false;
     }
-    size_t index = history->undo_index - 1u;
-    ProgTP_ConfigEntry *entry = &history->items[index];
-    const ProgTP_Equipment *snapshot = &entry->before;
+    ProgTP_ConfigNode *node = GetNodeAt(history, history->undo_count);
+    if (!node) {
+        ProgTP_SetError(error, error_size, "undo entry not found");
+        return false;
+    }
+    const ProgTP_Equipment *snapshot = &node->entry.before;
     if (snapshot->code == 0) {
-        snapshot = &entry->after;
+        snapshot = &node->entry.after;
     }
     if (!ProgTP_EquipmentInventoryApplySnapshot(inventory, snapshot, error, error_size)) {
         return false;
     }
-    entry->entry_state = PROGTP_CONFIG_ENTRY_UNDONE;
-    if (history->undo_index > 0) {
-        --history->undo_index;
-    }
+    node->entry.entry_state = PROGTP_CONFIG_ENTRY_UNDONE;
+    ++history->undo_count;
     return true;
 }
 
@@ -293,39 +374,50 @@ bool ProgTP_ConfigHistoryRedo(
         ProgTP_SetError(error, error_size, "missing config history or inventory");
         return false;
     }
-    if (history->undo_index >= history->length) {
+    if (!ProgTP_ConfigHistoryCanRedo(history)) {
         ProgTP_SetError(error, error_size, "nothing to redo");
         return false;
     }
-    ProgTP_ConfigEntry *entry = &history->items[history->undo_index];
-    if (!ProgTP_EquipmentInventoryApplySnapshot(inventory, &entry->after, error, error_size)) {
+    ProgTP_ConfigNode *node = GetNodeAt(history, history->undo_count - 1u);
+    if (!node) {
+        ProgTP_SetError(error, error_size, "redo entry not found");
         return false;
     }
-    entry->entry_state = PROGTP_CONFIG_ENTRY_APPLIED;
-    ++history->undo_index;
+    if (!ProgTP_EquipmentInventoryApplySnapshot(inventory, &node->entry.after, error, error_size)) {
+        return false;
+    }
+    node->entry.entry_state = PROGTP_CONFIG_ENTRY_APPLIED;
+    --history->undo_count;
     return true;
 }
 
 bool ProgTP_ConfigHistoryCanUndo(const ProgTP_ConfigHistory *history) {
-    return history && history->undo_index > 0;
+    return history && history->undo_count < history->length &&
+        GetNodeAtConst(history, history->undo_count) != NULL &&
+        GetNodeAtConst(history, history->undo_count)->entry.entry_state == PROGTP_CONFIG_ENTRY_APPLIED;
 }
 
 bool ProgTP_ConfigHistoryCanRedo(const ProgTP_ConfigHistory *history) {
-    return history && history->undo_index < history->length;
+    return history && history->undo_count > 0 &&
+        GetNodeAtConst(history, history->undo_count - 1u) != NULL &&
+        GetNodeAtConst(history, history->undo_count - 1u)->entry.entry_state == PROGTP_CONFIG_ENTRY_UNDONE;
 }
 
 size_t ProgTP_ConfigHistoryAppliedCount(const ProgTP_ConfigHistory *history) {
-    return history ? history->undo_index : 0u;
+    if (!history) {
+        return 0u;
+    }
+    return history->length - history->undo_count;
 }
 
 size_t ProgTP_ConfigHistoryUndoneCount(const ProgTP_ConfigHistory *history) {
     if (!history) {
         return 0u;
     }
-    return history->length > history->undo_index ? history->length - history->undo_index : 0u;
+    return history->undo_count;
 }
 
-bool ProgTP_ConfigHistoryDeleteById(
+bool ProgTP_ConfigHistoryPop(
     ProgTP_ConfigHistory *history,
     uint32_t id,
     char *error,
@@ -334,18 +426,26 @@ bool ProgTP_ConfigHistoryDeleteById(
         ProgTP_SetError(error, error_size, "missing config history");
         return false;
     }
-    for (size_t i = 0; i < history->length; ++i) {
-        if (history->items[i].id == id) {
-            if (i < history->undo_index) {
-                --history->undo_index;
+    ProgTP_ConfigNode *prev = NULL;
+    ProgTP_ConfigNode *current = history->top;
+    size_t index = 0;
+    while (current) {
+        if (current->entry.id == id) {
+            if (index < history->undo_count) {
+                --history->undo_count;
             }
-            memmove(
-                &history->items[i],
-                &history->items[i + 1u],
-                (history->length - i - 1u) * sizeof(history->items[0]));
+            if (prev) {
+                prev->next = current->next;
+            } else {
+                history->top = current->next;
+            }
+            free(current);
             --history->length;
             return true;
         }
+        prev = current;
+        current = current->next;
+        ++index;
     }
     ProgTP_SetError(error, error_size, "config entry not found");
     return false;
@@ -367,36 +467,33 @@ bool ProgTP_ConfigHistoryImportFromFile(
         return false;
     }
     uint32_t base_id = history->next_id;
-    for (size_t i = 0; i < imported.length; ++i) {
-        ProgTP_ConfigEntry *entry = &imported.items[i];
-        entry->id = base_id++;
-        if (history->next_id <= entry->id) {
-            history->next_id = entry->id + 1u;
+    const ProgTP_ConfigNode *current = imported.top;
+    while (current) {
+        ProgTP_ConfigEntry entry = current->entry;
+        entry.id = base_id++;
+        if (history->next_id <= entry.id) {
+            history->next_id = entry.id + 1u;
         }
-        char append_error[256] = {0};
-        if (!ProgTP_ConfigHistoryRecord(
+        char push_error[256] = {0};
+        if (!ProgTP_ConfigHistoryPush(
                 history,
-                entry->op_type,
-                &entry->before,
-                &entry->after,
-                entry->description,
-                append_error,
-                sizeof(append_error))) {
-            ProgTP_SetError(error, error_size, append_error[0] ? append_error : "could not import config entry");
+                entry.op_type,
+                &entry.before,
+                &entry.after,
+                entry.description,
+                push_error,
+                sizeof(push_error))) {
+            ProgTP_SetError(error, error_size, push_error[0] ? push_error : "could not import config entry");
             ProgTP_ConfigHistoryDestroy(&imported);
             return false;
         }
-        size_t last = history->length - 1u;
-        history->items[last].equipment_code = entry->equipment_code;
-        ProgTP_TextCopy(
-            history->items[last].equipment_name,
-            sizeof(history->items[last].equipment_name),
-            entry->equipment_name);
-        ProgTP_TextCopy(
-            history->items[last].timestamp,
-            sizeof(history->items[last].timestamp),
-            entry->timestamp);
-        history->items[last].entry_state = entry->entry_state;
+        if (history->top) {
+            history->top->entry.equipment_code = entry.equipment_code;
+            ProgTP_TextCopy(history->top->entry.equipment_name, sizeof(history->top->entry.equipment_name), entry.equipment_name);
+            ProgTP_TextCopy(history->top->entry.timestamp, sizeof(history->top->entry.timestamp), entry.timestamp);
+            history->top->entry.entry_state = entry.entry_state;
+        }
+        current = current->next;
     }
     ProgTP_ConfigHistoryDestroy(&imported);
     return true;

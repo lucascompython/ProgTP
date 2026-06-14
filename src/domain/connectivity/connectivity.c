@@ -377,9 +377,11 @@ bool ProgTP_ConnectivityExecute(
                 error_size);
         }
     } else {
-        for (size_t i = 0; i < inventory->array.length && ok; ++i) {
+        size_t count = ProgTP_EquipmentInventoryGetCount(inventory);
+        for (size_t i = 0; i < count && ok; ++i) {
+            const ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryGetByIndex(inventory, i);
             ok = RunPing(
-                &inventory->array.items[i],
+                equipment,
                 output,
                 ping_output_path,
                 monitoring_log_path,

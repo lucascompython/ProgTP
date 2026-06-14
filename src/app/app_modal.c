@@ -86,19 +86,19 @@ void SubmitConfigFile(ProgTP_AppState *state) {
         }
     }
     state->config_row_offset = 0;
-    state->selected_config_index = state->config_history.length > 0 ? state->config_history.length - 1u : 0u;
+    state->selected_config_index = ProgTP_ConfigHistoryGetCount(&state->config_history) > 0 ? ProgTP_ConfigHistoryGetCount(&state->config_history) - 1u : 0u;
     snprintf(state->status, sizeof(state->status), "Imported config history from %.280s", path);
     CloseModal(state);
 }
 
 void OpenRemoveConfigModal(ProgTP_AppState *state) {
-    if (state->config_history.length == 0 || state->selected_config_index >= state->config_history.length) {
+    if (ProgTP_ConfigHistoryGetCount(&state->config_history) == 0 || state->selected_config_index >= ProgTP_ConfigHistoryGetCount(&state->config_history)) {
         SetStatus(state, "No configuration entry selected");
         return;
     }
     state->modal = PROGTP_APP_MODAL_REMOVE_CONFIG;
     state->input_mode = PROGTP_APP_INPUT_NONE;
-    const ProgTP_ConfigEntry *entry = &state->config_history.items[state->selected_config_index];
+    const ProgTP_ConfigEntry *entry = ProgTP_ConfigHistoryGetByIndex(&state->config_history, state->selected_config_index);
     snprintf(
         state->modal_message,
         sizeof(state->modal_message),
@@ -108,11 +108,11 @@ void OpenRemoveConfigModal(ProgTP_AppState *state) {
 }
 
 void ConfirmRemoveConfig(ProgTP_AppState *state) {
-    if (state->selected_config_index >= state->config_history.length) {
+    if (state->selected_config_index >= ProgTP_ConfigHistoryGetCount(&state->config_history)) {
         CloseModal(state);
         return;
     }
-    uint32_t id = state->config_history.items[state->selected_config_index].id;
+    uint32_t id = ProgTP_ConfigHistoryGetByIndex(&state->config_history, state->selected_config_index)->id;
     if (!state->persistence_enabled) {
         ProgTP_ConfigOperationRequest request = {0};
         request.operation = PROGTP_CONFIG_OP_DELETE;
@@ -122,7 +122,7 @@ void ConfirmRemoveConfig(ProgTP_AppState *state) {
         return;
     }
     char error[256] = {0};
-    if (!ProgTP_ConfigHistoryDeleteById(&state->config_history, id, error, sizeof(error))) {
+    if (!ProgTP_ConfigHistoryPop(&state->config_history, id, error, sizeof(error))) {
         snprintf(state->status, sizeof(state->status), "Config delete failed: %s", error);
         CloseModal(state);
         return;
@@ -133,8 +133,8 @@ void ConfirmRemoveConfig(ProgTP_AppState *state) {
             snprintf(state->status, sizeof(state->status), "Config save failed: %s", save_error);
         }
     }
-    if (state->selected_config_index >= state->config_history.length && state->config_history.length > 0) {
-        state->selected_config_index = state->config_history.length - 1u;
+    if (state->selected_config_index >= ProgTP_ConfigHistoryGetCount(&state->config_history) && ProgTP_ConfigHistoryGetCount(&state->config_history) > 0) {
+        state->selected_config_index = ProgTP_ConfigHistoryGetCount(&state->config_history) - 1u;
     }
     snprintf(state->status, sizeof(state->status), "Removed config entry #%u", id);
     CloseModal(state);
@@ -742,14 +742,14 @@ void OpenAddIncidentModal(ProgTP_AppState *state) {
 }
 
 void OpenUpdateIncidentModal(ProgTP_AppState *state) {
-    if (state->incidents.length == 0 || state->selected_incident_index >= state->incidents.length) {
+    if (ProgTP_IncidentStoreGetCount(&state->incidents) == 0 || state->selected_incident_index >= ProgTP_IncidentStoreGetCount(&state->incidents)) {
         SetStatus(state, "No incident selected");
         return;
     }
     state->modal = PROGTP_APP_MODAL_UPDATE_INCIDENT;
     state->input_mode = PROGTP_APP_INPUT_NONE;
     state->incident_form_field = PROGTP_APP_INCIDENT_FORM_EQUIPMENT_CODE;
-    const ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+    const ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index);
     snprintf(state->incident_form_equipment_code, sizeof(state->incident_form_equipment_code), "%u", incident->equipment_code);
     snprintf(state->incident_form_source, sizeof(state->incident_form_source), "%s", incident->source);
     snprintf(state->incident_form_type, sizeof(state->incident_form_type), "%s", incident->type);
@@ -759,13 +759,13 @@ void OpenUpdateIncidentModal(ProgTP_AppState *state) {
 }
 
 void OpenRemoveIncidentModal(ProgTP_AppState *state) {
-    if (state->incidents.length == 0 || state->selected_incident_index >= state->incidents.length) {
+    if (ProgTP_IncidentStoreGetCount(&state->incidents) == 0 || state->selected_incident_index >= ProgTP_IncidentStoreGetCount(&state->incidents)) {
         SetStatus(state, "No incident selected");
         return;
     }
     state->modal = PROGTP_APP_MODAL_REMOVE_INCIDENT;
     state->input_mode = PROGTP_APP_INPUT_NONE;
-    const ProgTP_Incident *incident = &state->incidents.items[state->selected_incident_index];
+    const ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index);
     snprintf(state->modal_message, sizeof(state->modal_message), "Remove incident #%u?", incident->number);
 }
 
@@ -781,32 +781,24 @@ void SubmitIncidentForm(ProgTP_AppState *state) {
     ProgTP_FormatCurrentTimestamp(incident.created_at, sizeof(incident.created_at));
 
     if (state->modal == PROGTP_APP_MODAL_UPDATE_INCIDENT &&
-        state->selected_incident_index < state->incidents.length) {
-        incident.number = state->incidents.items[state->selected_incident_index].number;
-        incident.state = state->incidents.items[state->selected_incident_index].state;
-        snprintf(incident.created_at, sizeof(incident.created_at), "%s", state->incidents.items[state->selected_incident_index].created_at);
-        snprintf(incident.completed_at, sizeof(incident.completed_at), "%s", state->incidents.items[state->selected_incident_index].completed_at);
-        state->incidents.items[state->selected_incident_index] = incident;
+        state->selected_incident_index < ProgTP_IncidentStoreGetCount(&state->incidents)) {
+        const ProgTP_Incident *old_incident = ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index);
+        incident.number = old_incident->number;
+        incident.state = old_incident->state;
+        snprintf(incident.created_at, sizeof(incident.created_at), "%s", old_incident->created_at);
+        snprintf(incident.completed_at, sizeof(incident.completed_at), "%s", old_incident->completed_at);
         char save_error[128] = {0};
-        if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+        if (ProgTP_IncidentStoreUpdate(&state->incidents, incident.number, &incident, "incidentes.dat", save_error, sizeof(save_error))) {
             SetStatus(state, "Incident updated");
         } else {
             SetStatus(state, save_error);
         }
     } else {
-        incident.number = state->incidents.length > 0 ? state->incidents.items[state->incidents.length - 1u].number + 1u : 1u;
-        if (state->incidents.capacity < state->incidents.length + 1u) {
-            size_t capacity = state->incidents.capacity == 0 ? 16u : state->incidents.capacity * 2u;
-            ProgTP_Incident *items = realloc(state->incidents.items, capacity * sizeof(*items));
-            if (items) {
-                state->incidents.items = items;
-                state->incidents.capacity = capacity;
-            }
-        }
-        state->incidents.items[state->incidents.length++] = incident;
-        state->selected_incident_index = state->incidents.length - 1u;
+        size_t count = ProgTP_IncidentStoreGetCount(&state->incidents);
+        incident.number = count > 0 ? ProgTP_IncidentStoreGetByIndex(&state->incidents, count - 1u)->number + 1u : 1u;
         char save_error[128] = {0};
-        if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+        if (ProgTP_IncidentStoreEnqueue(&state->incidents, &incident, "incidentes.dat", save_error, sizeof(save_error))) {
+            state->selected_incident_index = ProgTP_IncidentStoreGetCount(&state->incidents) - 1u;
             SetStatus(state, "Incident created");
         } else {
             SetStatus(state, save_error);
@@ -816,20 +808,19 @@ void SubmitIncidentForm(ProgTP_AppState *state) {
 }
 
 void ConfirmRemoveIncident(ProgTP_AppState *state) {
-    if (state->selected_incident_index < state->incidents.length) {
-        memmove(
-            &state->incidents.items[state->selected_incident_index],
-            &state->incidents.items[state->selected_incident_index + 1u],
-            (state->incidents.length - state->selected_incident_index - 1u) * sizeof(state->incidents.items[0]));
-        --state->incidents.length;
-        if (state->selected_incident_index >= state->incidents.length && state->incidents.length > 0) {
-            state->selected_incident_index = state->incidents.length - 1u;
-        }
-        char save_error[128] = {0};
-        if (ProgTP_IncidentStoreSave(&state->incidents, "incidentes.dat", save_error, sizeof(save_error))) {
+    size_t count = ProgTP_IncidentStoreGetCount(&state->incidents);
+    if (state->selected_incident_index < count) {
+        const ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index);
+        uint32_t number = incident->number;
+        char error[128] = {0};
+        if (ProgTP_IncidentStoreDequeue(&state->incidents, number, "incidentes.dat", error, sizeof(error))) {
             SetStatus(state, "Incident removed");
         } else {
-            SetStatus(state, save_error);
+            SetStatus(state, error);
+        }
+        size_t new_count = ProgTP_IncidentStoreGetCount(&state->incidents);
+        if (state->selected_incident_index >= new_count && new_count > 0) {
+            state->selected_incident_index = new_count - 1u;
         }
     }
     CloseModal(state);

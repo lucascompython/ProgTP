@@ -9,9 +9,9 @@ static ProgTP_Equipment *SelectedEquipment(ProgTP_AppState *state) {
 }
 
 static bool IsFirstTypeOccurrence(const ProgTP_AppState *state, size_t item_index) {
-    const char *type = state->inventory.array.items[item_index].type;
+    const char *type = ProgTP_EquipmentInventoryGetByIndex(&state->inventory, item_index)->type;
     for (size_t i = 0; i < item_index; ++i) {
-        if (ProgTP_TextEqualsIgnoreCase(state->inventory.array.items[i].type, type)) {
+        if (ProgTP_TextEqualsIgnoreCase(ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i)->type, type)) {
             return false;
         }
     }
@@ -20,7 +20,7 @@ static bool IsFirstTypeOccurrence(const ProgTP_AppState *state, size_t item_inde
 
 static size_t TypeFilterCount(const ProgTP_AppState *state) {
     size_t count = 0;
-    for (size_t i = 0; i < state->inventory.array.length; ++i) {
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(&state->inventory); ++i) {
         if (IsFirstTypeOccurrence(state, i)) {
             ++count;
         }
@@ -30,12 +30,12 @@ static size_t TypeFilterCount(const ProgTP_AppState *state) {
 
 static const char *TypeFilterAt(const ProgTP_AppState *state, size_t type_index) {
     size_t current = 0;
-    for (size_t i = 0; i < state->inventory.array.length; ++i) {
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(&state->inventory); ++i) {
         if (!IsFirstTypeOccurrence(state, i)) {
             continue;
         }
         if (current == type_index) {
-            return state->inventory.array.items[i].type;
+            return ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i)->type;
         }
         ++current;
     }
@@ -54,8 +54,8 @@ bool MatchesCurrentView(const ProgTP_AppState *state, const ProgTP_Equipment *eq
 
 static bool SelectFilteredRowAt(ProgTP_AppState *state, size_t filtered_index) {
     size_t index = 0;
-    for (size_t i = 0; i < state->inventory.array.length; ++i) {
-        ProgTP_Equipment *equipment = &state->inventory.array.items[i];
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(&state->inventory); ++i) {
+        ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryGetByIndexMut(&state->inventory, i);
         if (!MatchesCurrentView(state, equipment)) {
             continue;
         }
@@ -70,8 +70,8 @@ static bool SelectFilteredRowAt(ProgTP_AppState *state, size_t filtered_index) {
 
 static size_t CountFilteredRows(const ProgTP_AppState *state) {
     size_t count = 0;
-    for (size_t i = 0; i < state->inventory.array.length; ++i) {
-        if (MatchesCurrentView(state, &state->inventory.array.items[i])) {
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(&state->inventory); ++i) {
+        if (MatchesCurrentView(state, ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i))) {
             ++count;
         }
     }
@@ -156,8 +156,8 @@ void MoveSelection(ProgTP_AppState *state, int direction) {
     }
     size_t current_index = 0;
     bool found = false;
-    for (size_t i = 0; i < state->inventory.array.length; ++i) {
-        ProgTP_Equipment *equipment = &state->inventory.array.items[i];
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(&state->inventory); ++i) {
+        ProgTP_Equipment *equipment = ProgTP_EquipmentInventoryGetByIndexMut(&state->inventory, i);
         if (!MatchesCurrentView(state, equipment)) {
             continue;
         }
@@ -183,14 +183,14 @@ void MoveSelection(ProgTP_AppState *state, int direction) {
 }
 
 void MoveInventorySelection(ProgTP_AppState *state, int direction) {
-    size_t count = state->inventory.array.length;
+    size_t count = ProgTP_EquipmentInventoryGetCount(&state->inventory);
     if (count == 0) {
         state->selected_code = 0;
         return;
     }
     size_t current = 0;
     for (size_t i = 0; i < count; ++i) {
-        if (state->inventory.array.items[i].code == state->selected_code) {
+        if (ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i)->code == state->selected_code) {
             current = i;
             break;
         }
@@ -201,7 +201,7 @@ void MoveInventorySelection(ProgTP_AppState *state, int direction) {
     } else {
         next = current == 0 ? count - 1u : current - 1u;
     }
-    state->selected_code = state->inventory.array.items[next].code;
+    state->selected_code = ProgTP_EquipmentInventoryGetByIndex(&state->inventory, next)->code;
 }
 
 void PageRows(ProgTP_AppState *state, int direction) {
@@ -244,9 +244,9 @@ void PrepareRows(ProgTP_AppState *state) {
     state->row_count = 0;
     state->filtered_count = 0;
     size_t selected_index = (size_t)-1;
-    for (size_t i = 0; i < state->inventory.array.length; ++i) {
-        if (MatchesCurrentView(state, &state->inventory.array.items[i])) {
-            if (state->inventory.array.items[i].code == state->selected_code) {
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(&state->inventory); ++i) {
+        if (MatchesCurrentView(state, ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i))) {
+            if (ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i)->code == state->selected_code) {
                 selected_index = state->filtered_count;
             }
             ++state->filtered_count;
@@ -267,12 +267,12 @@ void PrepareRows(ProgTP_AppState *state) {
     }
 
     size_t filtered_index = 0;
-    for (size_t i = 0; i < state->inventory.array.length; ++i) {
-        if (!MatchesCurrentView(state, &state->inventory.array.items[i])) {
+    for (size_t i = 0; i < ProgTP_EquipmentInventoryGetCount(&state->inventory); ++i) {
+        if (!MatchesCurrentView(state, ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i))) {
             continue;
         }
         if (filtered_index >= state->row_offset && state->row_count < PROGTP_VISIBLE_ROWS) {
-            AddRowText(state, &state->inventory.array.items[i]);
+            AddRowText(state, ProgTP_EquipmentInventoryGetByIndex(&state->inventory, i));
         }
         ++filtered_index;
     }

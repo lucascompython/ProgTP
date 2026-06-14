@@ -36,8 +36,8 @@ static bool IncidentVisible(const ProgTP_AppState *state, const ProgTP_Incident 
 
 static size_t CountVisibleIncidents(const ProgTP_AppState *state) {
     size_t count = 0;
-    for (size_t i = 0; i < state->incidents.length; ++i) {
-        if (IncidentVisible(state, &state->incidents.items[i])) {
+    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
+        if (IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
             ++count;
         }
     }
@@ -46,8 +46,8 @@ static size_t CountVisibleIncidents(const ProgTP_AppState *state) {
 
 static bool SelectVisibleIncidentAt(ProgTP_AppState *state, size_t visible_index) {
     size_t current = 0;
-    for (size_t i = 0; i < state->incidents.length; ++i) {
-        if (!IncidentVisible(state, &state->incidents.items[i])) {
+    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
+        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
             continue;
         }
         if (current == visible_index) {
@@ -60,16 +60,17 @@ static bool SelectVisibleIncidentAt(ProgTP_AppState *state, size_t visible_index
 }
 
 static void EnsureIncidentSelection(ProgTP_AppState *state) {
-    if (state->incidents.length == 0) {
+    size_t count = ProgTP_IncidentStoreGetCount(&state->incidents);
+    if (count == 0) {
         state->selected_incident_index = 0;
-    } else if (state->selected_incident_index >= state->incidents.length) {
-        state->selected_incident_index = state->incidents.length - 1u;
+    } else if (state->selected_incident_index >= count) {
+        state->selected_incident_index = count - 1u;
     }
 }
 
 static void EnsureIncidentSelectionInFilter(ProgTP_AppState *state) {
     EnsureIncidentSelection(state);
-    if (state->incidents.length == 0 || IncidentVisible(state, &state->incidents.items[state->selected_incident_index])) {
+    if (ProgTP_IncidentStoreGetCount(&state->incidents) == 0 || IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index))) {
         return;
     }
     SelectVisibleIncidentAt(state, 0);
@@ -83,8 +84,8 @@ void MoveIncidentSelection(ProgTP_AppState *state, int direction) {
     }
     size_t current = 0;
     bool found = false;
-    for (size_t i = 0; i < state->incidents.length; ++i) {
-        if (!IncidentVisible(state, &state->incidents.items[i])) {
+    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
+        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
             continue;
         }
         if (i == state->selected_incident_index) {
@@ -132,22 +133,22 @@ void PrepareIncidentText(ProgTP_AppState *state) {
     uint32_t pending_count = 0;
     uint32_t in_progress_count = 0;
     uint32_t completed_count = 0;
-    for (size_t i = 0; i < state->incidents.length; ++i) {
-        switch (state->incidents.items[i].state) {
+    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
+        switch (ProgTP_IncidentStoreGetByIndex(&state->incidents, i)->state) {
             case PROGTP_INCIDENT_PENDING: ++pending_count; break;
             case PROGTP_INCIDENT_IN_PROGRESS: ++in_progress_count; break;
             case PROGTP_INCIDENT_COMPLETED: ++completed_count; break;
         }
     }
-    snprintf(state->incident_metric_total_text, sizeof(state->incident_metric_total_text), "%zu total", state->incidents.length);
+    snprintf(state->incident_metric_total_text, sizeof(state->incident_metric_total_text), "%zu total", ProgTP_IncidentStoreGetCount(&state->incidents));
     snprintf(state->incident_metric_pending_text, sizeof(state->incident_metric_pending_text), "%u pending", pending_count);
     snprintf(state->incident_metric_in_progress_text, sizeof(state->incident_metric_in_progress_text), "%u in progress", in_progress_count);
     snprintf(state->incident_metric_completed_text, sizeof(state->incident_metric_completed_text), "%u completed", completed_count);
 
     EnsureIncidentSelectionInFilter(state);
     state->incident_detail_count = 0;
-    if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
-        const ProgTP_Incident *selected = &state->incidents.items[state->selected_incident_index];
+    if (ProgTP_IncidentStoreGetCount(&state->incidents) > 0 && state->selected_incident_index < ProgTP_IncidentStoreGetCount(&state->incidents)) {
+        const ProgTP_Incident *selected = ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index);
         snprintf(
             state->incident_selected_text,
             sizeof(state->incident_selected_text),
@@ -184,8 +185,8 @@ void PrepareIncidentText(ProgTP_AppState *state) {
     }
     size_t selected_visible_index = (size_t)-1;
     size_t visible_index = 0;
-    for (size_t i = 0; i < state->incidents.length; ++i) {
-        if (!IncidentVisible(state, &state->incidents.items[i])) {
+    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
+        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
             continue;
         }
         if (i == state->selected_incident_index) {
@@ -201,8 +202,8 @@ void PrepareIncidentText(ProgTP_AppState *state) {
     }
 
     visible_index = 0;
-    for (size_t i = 0; i < state->incidents.length && state->incident_row_count < PROGTP_VISIBLE_ROWS; ++i) {
-        const ProgTP_Incident *incident = &state->incidents.items[i];
+    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents) && state->incident_row_count < PROGTP_VISIBLE_ROWS; ++i) {
+        const ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndex(&state->incidents, i);
         if (!IncidentVisible(state, incident)) {
             continue;
         }
@@ -268,9 +269,9 @@ void IncidentRows(ProgTP_AppState *state) {
         }
         for (size_t i = 0; i < state->incident_row_count; ++i) {
             uint32_t incident_number = state->incident_row_numbers[i];
-            bool selected = state->incidents.length > 0 &&
-                state->selected_incident_index < state->incidents.length &&
-                state->incidents.items[state->selected_incident_index].number == incident_number;
+            bool selected = ProgTP_IncidentStoreGetCount(&state->incidents) > 0 &&
+                state->selected_incident_index < ProgTP_IncidentStoreGetCount(&state->incidents) &&
+                ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index)->number == incident_number;
             CLAY(CLAY_IDI("IncidentRow", (uint32_t)i), {
                 .layout = {
                     .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32) },
@@ -302,7 +303,7 @@ void IncidentDetailPanel(ProgTP_AppState *state) {
         .cornerRadius = CLAY_CORNER_RADIUS(5),
     }) {
         TextLine("Selected incident", 16, COLOR_TEXT);
-        if (state->incidents.length > 0 && state->selected_incident_index < state->incidents.length) {
+        if (ProgTP_IncidentStoreGetCount(&state->incidents) > 0 && state->selected_incident_index < ProgTP_IncidentStoreGetCount(&state->incidents)) {
             TextLine(state->incident_selected_text, 13, COLOR_TEXT);
             for (size_t i = 0; i < state->incident_detail_count; ++i) {
                 TextLine(state->incident_detail_texts[i], 12, COLOR_MUTED);

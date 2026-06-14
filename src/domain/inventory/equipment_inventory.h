@@ -47,14 +47,15 @@ typedef struct {
     char last_checked[PROGTP_EQUIPMENT_DATE_SIZE];
 } ProgTP_EquipmentInput;
 
-typedef struct {
-    ProgTP_Equipment *items;
-    size_t length;
-    size_t capacity;
-} ProgTP_EquipmentArray;
+typedef struct ProgTP_EquipmentNode {
+    ProgTP_Equipment equipment;
+    struct ProgTP_EquipmentNode *next;
+} ProgTP_EquipmentNode;
 
 typedef struct {
-    ProgTP_EquipmentArray array;
+    ProgTP_EquipmentNode *head;
+    ProgTP_EquipmentNode *tail;
+    size_t length;
     uint32_t next_code;
 } ProgTP_EquipmentInventory;
 
@@ -63,6 +64,10 @@ typedef bool (*ProgTP_EquipmentVisitor)(const ProgTP_Equipment *equipment, void 
 void ProgTP_EquipmentInventoryInit(ProgTP_EquipmentInventory *inventory);
 void ProgTP_EquipmentInventoryDestroy(ProgTP_EquipmentInventory *inventory);
 void ProgTP_EquipmentInventoryClear(ProgTP_EquipmentInventory *inventory);
+
+size_t ProgTP_EquipmentInventoryGetCount(const ProgTP_EquipmentInventory *inventory);
+const ProgTP_Equipment *ProgTP_EquipmentInventoryGetByIndex(const ProgTP_EquipmentInventory *inventory, size_t index);
+ProgTP_Equipment *ProgTP_EquipmentInventoryGetByIndexMut(ProgTP_EquipmentInventory *inventory, size_t index);
 
 bool ProgTP_EquipmentInputInit(
     ProgTP_EquipmentInput *input,
@@ -114,9 +119,9 @@ ProgTP_Equipment *ProgTP_EquipmentInventoryFindByIp(ProgTP_EquipmentInventory *i
 ProgTP_Equipment *ProgTP_EquipmentInventoryFindByMac(ProgTP_EquipmentInventory *inventory, const char *mac_address);
 const ProgTP_Equipment *ProgTP_EquipmentInventoryFindByCodeConst(const ProgTP_EquipmentInventory *inventory, uint32_t code);
 
-void ProgTP_EquipmentInventoryVisitArray(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentVisitor visitor, void *user_data);
-void ProgTP_EquipmentInventoryVisitByType(const ProgTP_EquipmentInventory *inventory, const char *type, ProgTP_EquipmentVisitor visitor, void *user_data);
-void ProgTP_EquipmentInventoryVisitByState(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentState state, ProgTP_EquipmentVisitor visitor, void *user_data);
+void ProgTP_EquipmentInventoryForEach(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentVisitor visitor, void *user_data);
+void ProgTP_EquipmentInventoryForEachByType(const ProgTP_EquipmentInventory *inventory, const char *type, ProgTP_EquipmentVisitor visitor, void *user_data);
+void ProgTP_EquipmentInventoryForEachByState(const ProgTP_EquipmentInventory *inventory, ProgTP_EquipmentState state, ProgTP_EquipmentVisitor visitor, void *user_data);
 
 bool ProgTP_EquipmentInventorySaveBinary(const ProgTP_EquipmentInventory *inventory, const char *path, char *error, size_t error_size);
 bool ProgTP_EquipmentInventoryLoadBinary(ProgTP_EquipmentInventory *inventory, const char *path, char *error, size_t error_size);

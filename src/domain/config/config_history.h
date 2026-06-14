@@ -36,12 +36,16 @@ typedef struct {
     ProgTP_ConfigEntryState entry_state;
 } ProgTP_ConfigEntry;
 
+typedef struct ProgTP_ConfigNode {
+    ProgTP_ConfigEntry entry;
+    struct ProgTP_ConfigNode *next;
+} ProgTP_ConfigNode;
+
 typedef struct {
-    ProgTP_ConfigEntry *items;
+    ProgTP_ConfigNode *top;
     size_t length;
-    size_t capacity;
     uint32_t next_id;
-    size_t undo_index;
+    size_t undo_count;
 } ProgTP_ConfigHistory;
 
 void ProgTP_ConfigHistoryInit(ProgTP_ConfigHistory *history);
@@ -49,10 +53,14 @@ void ProgTP_ConfigHistoryDestroy(ProgTP_ConfigHistory *history);
 void ProgTP_ConfigHistoryClear(ProgTP_ConfigHistory *history);
 bool ProgTP_ConfigHistoryCopy(ProgTP_ConfigHistory *destination, const ProgTP_ConfigHistory *source, char *error, size_t error_size);
 
+size_t ProgTP_ConfigHistoryGetCount(const ProgTP_ConfigHistory *history);
+const ProgTP_ConfigEntry *ProgTP_ConfigHistoryGetByIndex(const ProgTP_ConfigHistory *history, size_t index);
+ProgTP_ConfigEntry *ProgTP_ConfigHistoryGetByIndexMut(ProgTP_ConfigHistory *history, size_t index);
+
 bool ProgTP_ConfigHistoryLoad(ProgTP_ConfigHistory *history, const char *path, char *error, size_t error_size);
 bool ProgTP_ConfigHistorySave(const ProgTP_ConfigHistory *history, const char *path, char *error, size_t error_size);
 
-bool ProgTP_ConfigHistoryRecord(
+bool ProgTP_ConfigHistoryPush(
     ProgTP_ConfigHistory *history,
     ProgTP_ConfigOpType op_type,
     const ProgTP_Equipment *before,
@@ -73,7 +81,7 @@ bool ProgTP_ConfigHistoryRedo(
     char *error,
     size_t error_size);
 
-bool ProgTP_ConfigHistoryDeleteById(
+bool ProgTP_ConfigHistoryPop(
     ProgTP_ConfigHistory *history,
     uint32_t id,
     char *error,

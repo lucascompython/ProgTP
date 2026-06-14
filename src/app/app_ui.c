@@ -28,8 +28,8 @@ static void HandleUiInteraction(Clay_ElementId element_id, Clay_PointerData poin
     }
     if (value >= PROGTP_UI_CONFIG_SELECT_BASE) {
         uint32_t entry_id = (uint32_t)(value - PROGTP_UI_CONFIG_SELECT_BASE);
-        for (size_t i = 0; i < progtp_interaction_state->config_history.length; ++i) {
-            if (progtp_interaction_state->config_history.items[i].id == entry_id) {
+        for (size_t i = 0; i < ProgTP_ConfigHistoryGetCount(&progtp_interaction_state->config_history); ++i) {
+            if (ProgTP_ConfigHistoryGetByIndex(&progtp_interaction_state->config_history, i)->id == entry_id) {
                 progtp_interaction_state->selected_config_index = i;
                 break;
             }
@@ -45,8 +45,8 @@ static void HandleUiInteraction(Clay_ElementId element_id, Clay_PointerData poin
     }
     if (value >= PROGTP_UI_INCIDENT_SELECT_BASE) {
         uint32_t incident_number = (uint32_t)(value - PROGTP_UI_INCIDENT_SELECT_BASE);
-        for (size_t i = 0; i < progtp_interaction_state->incidents.length; ++i) {
-            if (progtp_interaction_state->incidents.items[i].number == incident_number) {
+        for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&progtp_interaction_state->incidents); ++i) {
+            if (ProgTP_IncidentStoreGetByIndex(&progtp_interaction_state->incidents, i)->number == incident_number) {
                 progtp_interaction_state->selected_incident_index = i;
                 break;
             }
