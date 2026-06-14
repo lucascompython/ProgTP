@@ -284,4 +284,4 @@ rtk ./build/progtp-server --port 8000 --public build
 - [ ] make the cursor look "clickable" on web and native
 - [ ] make the buttons look clickable on web and native
 - [ ] support real file uploads with file dialogs
-- [ ] module 4 sort by priority
+- [x] module 4 sort by priority

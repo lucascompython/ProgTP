@@ -780,6 +780,14 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             state->incident_filter_state = 3;
             state->incident_row_offset = 0;
             break;
+        case PROGTP_APP_ACTION_INCIDENT_SORT_BY_ID:
+            state->incident_sort_mode = 0;
+            state->incident_row_offset = 0;
+            break;
+        case PROGTP_APP_ACTION_INCIDENT_SORT_BY_PRIORITY:
+            state->incident_sort_mode = 1;
+            state->incident_row_offset = 0;
+            break;
         case PROGTP_APP_ACTION_CONFIG_PAGE_PREVIOUS: PageConfig(state, -1); break;
         case PROGTP_APP_ACTION_CONFIG_PAGE_NEXT: PageConfig(state, 1); break;
         case PROGTP_APP_ACTION_CONFIG_PREVIOUS: MoveConfigSelection(state, -1); break;

@@ -36,8 +36,12 @@ static bool IncidentVisible(const ProgTP_AppState *state, const ProgTP_Incident 
 
 static size_t CountVisibleIncidents(const ProgTP_AppState *state) {
     size_t count = 0;
-    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
-        if (IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
+    for (size_t i = 0; i < state->incident_sorted_count; ++i) {
+        size_t idx = state->incident_sorted_indices[i];
+        if (idx >= ProgTP_IncidentStoreGetCount(&state->incidents)) {
+            continue;
+        }
+        if (IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, idx))) {
             ++count;
         }
     }
@@ -46,12 +50,16 @@ static size_t CountVisibleIncidents(const ProgTP_AppState *state) {
 
 static bool SelectVisibleIncidentAt(ProgTP_AppState *state, size_t visible_index) {
     size_t current = 0;
-    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
-        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
+    for (size_t i = 0; i < state->incident_sorted_count; ++i) {
+        size_t idx = state->incident_sorted_indices[i];
+        if (idx >= ProgTP_IncidentStoreGetCount(&state->incidents)) {
+            continue;
+        }
+        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, idx))) {
             continue;
         }
         if (current == visible_index) {
-            state->selected_incident_index = i;
+            state->selected_incident_index = idx;
             return true;
         }
         ++current;
@@ -70,7 +78,11 @@ static void EnsureIncidentSelection(ProgTP_AppState *state) {
 
 static void EnsureIncidentSelectionInFilter(ProgTP_AppState *state) {
     EnsureIncidentSelection(state);
-    if (ProgTP_IncidentStoreGetCount(&state->incidents) == 0 || IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index))) {
+    if (ProgTP_IncidentStoreGetCount(&state->incidents) == 0) {
+        return;
+    }
+    if (state->selected_incident_index < ProgTP_IncidentStoreGetCount(&state->incidents) &&
+        IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, state->selected_incident_index))) {
         return;
     }
     SelectVisibleIncidentAt(state, 0);
@@ -84,11 +96,15 @@ void MoveIncidentSelection(ProgTP_AppState *state, int direction) {
     }
     size_t current = 0;
     bool found = false;
-    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
-        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
+    for (size_t i = 0; i < state->incident_sorted_count; ++i) {
+        size_t idx = state->incident_sorted_indices[i];
+        if (idx >= ProgTP_IncidentStoreGetCount(&state->incidents)) {
             continue;
         }
-        if (i == state->selected_incident_index) {
+        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, idx))) {
+            continue;
+        }
+        if (idx == state->selected_incident_index) {
             found = true;
             break;
         }
@@ -125,10 +141,59 @@ void PageIncidents(ProgTP_AppState *state, int direction) {
     SelectVisibleIncidentAt(state, state->incident_row_offset);
 }
 
+static int IncidentPriorityRank(const char *priority) {
+    if (strcmp(priority, "High") == 0) {
+        return 0;
+    }
+    if (strcmp(priority, "Medium") == 0) {
+        return 1;
+    }
+    if (strcmp(priority, "Low") == 0) {
+        return 2;
+    }
+    return 3;
+}
+
+static int CompareIncidentsByPriority(const ProgTP_IncidentStore *store, size_t ia, size_t ib) {
+    const ProgTP_Incident *inc_a = ProgTP_IncidentStoreGetByIndex(store, ia);
+    const ProgTP_Incident *inc_b = ProgTP_IncidentStoreGetByIndex(store, ib);
+    int rank_a = inc_a ? IncidentPriorityRank(inc_a->priority) : 3;
+    int rank_b = inc_b ? IncidentPriorityRank(inc_b->priority) : 3;
+    if (rank_a != rank_b) {
+        return rank_a - rank_b;
+    }
+    if (inc_a && inc_b) {
+        return (int)(inc_a->number - inc_b->number);
+    }
+    return 0;
+}
+
+static void SortIndicesByPriority(ProgTP_AppState *state) {
+    size_t n = state->incident_sorted_count;
+    for (size_t i = 1u; i < n; ++i) {
+        size_t key = state->incident_sorted_indices[i];
+        size_t j = i;
+        while (j > 0 && CompareIncidentsByPriority(&state->incidents, state->incident_sorted_indices[j - 1u], key) > 0) {
+            state->incident_sorted_indices[j] = state->incident_sorted_indices[j - 1u];
+            --j;
+        }
+        state->incident_sorted_indices[j] = key;
+    }
+}
+
 void PrepareIncidentText(ProgTP_AppState *state) {
     if (state->needs_incident_reload) {
         state->needs_incident_reload = false;
         ProgTP_IncidentStoreLoad(&state->incidents, "incidentes.dat", state->status, sizeof(state->status));
+    }
+
+    size_t total = ProgTP_IncidentStoreGetCount(&state->incidents);
+    state->incident_sorted_count = total;
+    for (size_t i = 0; i < total && i < 128u; ++i) {
+        state->incident_sorted_indices[i] = i;
+    }
+    if (state->incident_sort_mode == 1) {
+        SortIndicesByPriority(state);
     }
     uint32_t pending_count = 0;
     uint32_t in_progress_count = 0;
@@ -185,11 +250,15 @@ void PrepareIncidentText(ProgTP_AppState *state) {
     }
     size_t selected_visible_index = (size_t)-1;
     size_t visible_index = 0;
-    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents); ++i) {
-        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, i))) {
+    for (size_t i = 0; i < state->incident_sorted_count; ++i) {
+        size_t idx = state->incident_sorted_indices[i];
+        if (idx >= ProgTP_IncidentStoreGetCount(&state->incidents)) {
             continue;
         }
-        if (i == state->selected_incident_index) {
+        if (!IncidentVisible(state, ProgTP_IncidentStoreGetByIndex(&state->incidents, idx))) {
+            continue;
+        }
+        if (idx == state->selected_incident_index) {
             selected_visible_index = visible_index;
             break;
         }
@@ -202,8 +271,12 @@ void PrepareIncidentText(ProgTP_AppState *state) {
     }
 
     visible_index = 0;
-    for (size_t i = 0; i < ProgTP_IncidentStoreGetCount(&state->incidents) && state->incident_row_count < PROGTP_VISIBLE_ROWS; ++i) {
-        const ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndex(&state->incidents, i);
+    for (size_t i = 0; i < state->incident_sorted_count && state->incident_row_count < PROGTP_VISIBLE_ROWS; ++i) {
+        size_t idx = state->incident_sorted_indices[i];
+        if (idx >= ProgTP_IncidentStoreGetCount(&state->incidents)) {
+            continue;
+        }
+        const ProgTP_Incident *incident = ProgTP_IncidentStoreGetByIndex(&state->incidents, idx);
         if (!IncidentVisible(state, incident)) {
             continue;
         }
@@ -361,6 +434,15 @@ void IncidentModule(ProgTP_AppState *state) {
             Button(621, "Pending", PROGTP_APP_ACTION_INCIDENT_FILTER_PENDING, state->incident_filter_state == 1, false);
             Button(622, "In Progress", PROGTP_APP_ACTION_INCIDENT_FILTER_IN_PROGRESS, state->incident_filter_state == 2, false);
             Button(623, "Completed", PROGTP_APP_ACTION_INCIDENT_FILTER_COMPLETED, state->incident_filter_state == 3, false);
+        }
+        CLAY(CLAY_ID("IncidentSort"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = ControlGap(),
+            },
+        }) {
+            Button(624, "Sort: ID", PROGTP_APP_ACTION_INCIDENT_SORT_BY_ID, state->incident_sort_mode == 0, false);
+            Button(625, "Sort: Priority", PROGTP_APP_ACTION_INCIDENT_SORT_BY_PRIORITY, state->incident_sort_mode == 1, false);
         }
         CLAY(CLAY_ID("IncidentContent"), {
             .layout = {

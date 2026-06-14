@@ -85,6 +85,8 @@ typedef enum {
     PROGTP_APP_ACTION_INCIDENT_FILTER_PENDING,
     PROGTP_APP_ACTION_INCIDENT_FILTER_IN_PROGRESS,
     PROGTP_APP_ACTION_INCIDENT_FILTER_COMPLETED,
+    PROGTP_APP_ACTION_INCIDENT_SORT_BY_ID,
+    PROGTP_APP_ACTION_INCIDENT_SORT_BY_PRIORITY,
     PROGTP_APP_ACTION_INCIDENT_ADD,
     PROGTP_APP_ACTION_INCIDENT_EDIT,
     PROGTP_APP_ACTION_INCIDENT_DELETE,
@@ -254,6 +256,9 @@ typedef struct {
     ProgTP_IncidentStore incidents;
     size_t selected_incident_index;
     uint32_t incident_filter_state;
+    uint32_t incident_sort_mode;
+    size_t incident_sorted_indices[128];
+    size_t incident_sorted_count;
     bool incident_operation_pending;
     bool incident_operation_in_flight;
     bool incident_has_result;
