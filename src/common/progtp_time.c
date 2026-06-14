@@ -77,3 +77,34 @@ bool ProgTP_FormatFileSize(size_t bytes, char *buffer, size_t buffer_size) {
     }
     return true;
 }
+
+bool ProgTP_FormatReportMonth(char *buffer, size_t buffer_size) {
+    if (!buffer || buffer_size < 16) {
+        return false;
+    }
+    struct tm local_time;
+    if (!CurrentLocalTime(&local_time)) {
+        buffer[0] = '\0';
+        return false;
+    }
+    int month = local_time.tm_mon + 1;
+    int year = local_time.tm_year + 1900;
+    const char *month_name;
+    switch (month) {
+        case 1: month_name = "janeiro"; break;
+        case 2: month_name = "fevereiro"; break;
+        case 3: month_name = "marco"; break;
+        case 4: month_name = "abril"; break;
+        case 5: month_name = "maio"; break;
+        case 6: month_name = "junho"; break;
+        case 7: month_name = "julho"; break;
+        case 8: month_name = "agosto"; break;
+        case 9: month_name = "setembro"; break;
+        case 10: month_name = "outubro"; break;
+        case 11: month_name = "novembro"; break;
+        case 12: month_name = "dezembro"; break;
+        default: month_name = "mes"; break;
+    }
+    int written = snprintf(buffer, buffer_size, "%s_%d", month_name, year);
+    return written > 0 && (size_t)written < buffer_size;
+}

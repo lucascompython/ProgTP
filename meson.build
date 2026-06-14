@@ -72,6 +72,7 @@ src_inc = include_directories(
     'src/domain/incidents',
     'src/domain/inventory',
     'src/domain/sensors',
+    'src/domain/reports',
     'src/protocol',
 )
 
@@ -91,6 +92,7 @@ inventory_sources = files('src/domain/inventory/equipment_inventory.c')
 incident_sources = files('src/domain/incidents/incident_store.c')
 config_sources = files('src/domain/config/config_history.c')
 sensor_sources = files('src/domain/sensors/sensor_store.c')
+report_sources = files('src/domain/reports/report_generator.c')
 connectivity_model_sources = files('src/domain/connectivity/connectivity_model.c')
 connectivity_sources = files('src/domain/connectivity/connectivity.c') + connectivity_model_sources + incident_sources
 protocol_sources = files('src/protocol/protocol.c') + inventory_sources
@@ -165,7 +167,7 @@ if not server_opt.disabled() and facil_sp.found()
     facil_dep = facil_sp.get_variable('facil_dep').as_system('system')
     server_exe = executable(
         'progtp-server',
-        ['src/server/server.c', support_sources, protocol_sources, connectivity_sources, sensor_sources, config_sources],
+        ['src/server/server.c', support_sources, protocol_sources, connectivity_sources, sensor_sources, config_sources, report_sources],
         c_args: server_warning_suppressions,
         dependencies: [facil_dep, yyjson_dep],
         include_directories: src_inc,
@@ -255,6 +257,7 @@ if not native_opt.disabled() and sdl3_sp.found() and sdl3_ttf_sp.found()
             connectivity_sources,
             sensor_sources,
             config_sources,
+            report_sources,
         ],
         dependencies: common_deps + [sdl3_dep, sdl3_ttf_dep, sdl3_image_dep, yyjson_dep, curl_dep],
         include_directories: src_inc,
@@ -284,6 +287,7 @@ if not tui_opt.disabled() and termbox2_sp.found()
             connectivity_sources,
             sensor_sources,
             config_sources,
+            report_sources,
         ],
         c_args: ['-D_DEFAULT_SOURCE'],
         dependencies: common_deps + [
@@ -341,6 +345,7 @@ if web_cc.found()
             'src/domain/incidents/incident_store.c',
             'src/domain/config/config_history.c',
             'src/domain/sensors/sensor_store.c',
+            'src/domain/reports/report_generator.c',
             'src/protocol/protocol.c',
         ],
         output: ['index.js', wasm_binary_output],
@@ -371,6 +376,7 @@ if web_cc.found()
             '-I' + meson.current_source_dir() / 'src/domain/incidents',
             '-I' + meson.current_source_dir() / 'src/domain/config',
             '-I' + meson.current_source_dir() / 'src/domain/sensors',
+            '-I' + meson.current_source_dir() / 'src/domain/reports',
             '-I' + meson.current_source_dir() / 'src/protocol',
             '-I' + meson.current_source_dir() / 'subprojects/yyjson/src',
             '-I' + clay_root,
@@ -399,6 +405,7 @@ if web_cc.found()
             '@INPUT17@',
             '@INPUT18@',
             '@INPUT19@',
+            '@INPUT20@',
             meson.current_source_dir() / 'subprojects/yyjson/src/yyjson.c',
         ],
         env: web_env,

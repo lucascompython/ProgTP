@@ -3,13 +3,14 @@
 
 #include "progtp_text.h"
 #include "progtp_time.h"
+#include "report_generator.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 
-#define FILES_ENTRY_COUNT 6
+#define FILES_ENTRY_COUNT 8
 #define FILES_PREVIEW_MAX 128
 
 typedef enum {
@@ -19,10 +20,12 @@ typedef enum {
     FILE_TYPE_SENSORS,
     FILE_TYPE_MONITORING,
     FILE_TYPE_PING_OUTPUT,
+    FILE_TYPE_NETWORK_REPORT,
+    FILE_TYPE_INCIDENT_REPORT,
 } FileType;
 
 typedef struct {
-    const char *path;
+    char *path;
     FileType type;
     bool is_binary;
     const char *display_name;
@@ -36,21 +39,36 @@ typedef struct {
     time_t modified;
 } FileEntry;
 
-static const FileDescriptor FILE_TABLE[FILES_ENTRY_COUNT] = {
-    { "equipamentos.dat",      FILE_TYPE_EQUIPMENT,   true,  "Inventory",       "Binary" },
-    { "incidentes.dat",        FILE_TYPE_INCIDENTS,   true,  "Incidents",       "Binary" },
-    { "configuracoes.dat",     FILE_TYPE_CONFIG,      true,  "Config history",  "Binary" },
-    { "leituras_sensores.dat", FILE_TYPE_SENSORS,     true,  "Sensor readings", "Binary" },
-    { "log_monitorizacao.txt", FILE_TYPE_MONITORING, false, "Monitoring log",  "Text"   },
-    { "resultado_ping.txt",    FILE_TYPE_PING_OUTPUT,  false, "Ping output",      "Text"   },
-};
-
 static FileEntry g_files[FILES_ENTRY_COUNT];
 static size_t g_files_count;
 static char g_preview_buf[FILES_PREVIEW_MAX][192];
 static size_t g_preview_count;
+static char g_report_network_path[96];
+static char g_report_incident_path[96];
+
+static FileDescriptor FILE_TABLE[FILES_ENTRY_COUNT] = {
+    { "equipamentos.dat",            FILE_TYPE_EQUIPMENT,      true,  "Inventory",       "Binary" },
+    { "incidentes.dat",              FILE_TYPE_INCIDENTS,      true,  "Incidents",       "Binary" },
+    { "configuracoes.dat",           FILE_TYPE_CONFIG,         true,  "Config history",  "Binary" },
+    { "leituras_sensores.dat",       FILE_TYPE_SENSORS,        true,  "Sensor readings", "Binary" },
+    { "log_monitorizacao.txt",       FILE_TYPE_MONITORING,     false, "Monitoring log",  "Text"   },
+    { "resultado_ping.txt",          FILE_TYPE_PING_OUTPUT,    false, "Ping output",      "Text"   },
+    { "relatorio_estado_rede.txt",   FILE_TYPE_NETWORK_REPORT,  false, "Network status report", "Text" },
+    { "relatorio_incidentes.txt",    FILE_TYPE_INCIDENT_REPORT, false, "Incident report",  "Text" },
+};
+
+static void OnRefreshUpdateReportPaths(void) {
+    char month_part[32];
+    if (ProgTP_FormatReportMonth(month_part, sizeof(month_part))) {
+        snprintf(g_report_network_path, sizeof(g_report_network_path), "relatorio_estado_rede_%s.txt", month_part);
+        snprintf(g_report_incident_path, sizeof(g_report_incident_path), "relatorio_incidentes_%s.txt", month_part);
+        ((FileDescriptor *)&FILE_TABLE[6])->path = g_report_network_path;
+        ((FileDescriptor *)&FILE_TABLE[7])->path = g_report_incident_path;
+    }
+}
 
 static void RefreshFileList(void) {
+    OnRefreshUpdateReportPaths();
     g_files_count = 0;
     for (size_t i = 0; i < FILES_ENTRY_COUNT; ++i) {
         const FileDescriptor *desc = &FILE_TABLE[i];
@@ -567,6 +585,16 @@ void FilesModule(ProgTP_AppState *state) {
             Button(910, "Refresh", PROGTP_APP_ACTION_FILES_REFRESH, true, false);
             Button(911, "Prev", PROGTP_APP_ACTION_FILES_PREVIOUS, g_files_count > 1, false);
             Button(912, "Next", PROGTP_APP_ACTION_FILES_NEXT, g_files_count > 1, false);
+        }
+        CLAY(CLAY_ID("FilesActionsRow2"), {
+            .layout = {
+                .layoutDirection = progtp_ui_compact ? CLAY_TOP_TO_BOTTOM : CLAY_LEFT_TO_RIGHT,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = ControlGap(),
+            },
+        }) {
+            Button(913, "Generate Network Report", PROGTP_APP_ACTION_FILES_GENERATE_NETWORK_REPORT, state->persistence_enabled, false);
+            Button(914, "Generate Incident Report", PROGTP_APP_ACTION_FILES_GENERATE_INCIDENT_REPORT, state->persistence_enabled, false);
         }
         CLAY(CLAY_ID("FilesFilters"), {
             .layout = {

@@ -3,6 +3,7 @@
 
 #include "progtp_text.h"
 #include "progtp_time.h"
+#include "report_generator.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -779,6 +780,54 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             state->files_row_offset = 0;
             state->files_preview_loaded = false;
             break;
+        case PROGTP_APP_ACTION_FILES_GENERATE_NETWORK_REPORT: {
+            if (!state->persistence_enabled) {
+                SetStatus(state, "Reports require local mode");
+                break;
+            }
+            char month_part[32];
+            char filename[96];
+            if (!ProgTP_FormatReportMonth(month_part, sizeof(month_part))) {
+                SetStatus(state, "Could not determine current date");
+                break;
+            }
+            snprintf(filename, sizeof(filename), "relatorio_estado_rede_%s.txt", month_part);
+            char error[256] = {0};
+            if (ProgTP_GenerateNetworkStatusReport(&state->inventory, &state->incidents, &state->sensors, filename, error, sizeof(error))) {
+                state->files_needs_refresh = true;
+                state->files_preview_loaded = false;
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Network status report generated: %s", filename);
+                SetStatus(state, msg);
+            } else {
+                SetStatus(state, error);
+            }
+            break;
+        }
+        case PROGTP_APP_ACTION_FILES_GENERATE_INCIDENT_REPORT: {
+            if (!state->persistence_enabled) {
+                SetStatus(state, "Reports require local mode");
+                break;
+            }
+            char month_part[32];
+            char filename[96];
+            if (!ProgTP_FormatReportMonth(month_part, sizeof(month_part))) {
+                SetStatus(state, "Could not determine current date");
+                break;
+            }
+            snprintf(filename, sizeof(filename), "relatorio_incidentes_%s.txt", month_part);
+            char error[256] = {0};
+            if (ProgTP_GenerateIncidentReport(&state->incidents, filename, error, sizeof(error))) {
+                state->files_needs_refresh = true;
+                state->files_preview_loaded = false;
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Incident report generated: %s", filename);
+                SetStatus(state, msg);
+            } else {
+                SetStatus(state, error);
+            }
+            break;
+        }
         case PROGTP_APP_ACTION_INCIDENT_ADD:
             OpenAddIncidentModal(state);
             break;
