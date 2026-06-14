@@ -222,6 +222,7 @@ static bool ImportLines(
     size_t error_size) {
     const char *line;
     uint32_t line_number = 0;
+    bool header_seen = false;
     while ((line = next_line(context)) != NULL) {
         ++line_number;
         char buffer[256];
@@ -230,6 +231,32 @@ static bool ImportLines(
         char *trimmed = ProgTP_TextTrimLeft(buffer);
         if (trimmed[0] == '\0' || trimmed[0] == '#') {
             continue;
+        }
+        if (!header_seen) {
+            char temp[256];
+            snprintf(temp, sizeof(temp), "%s", trimmed);
+            char *fields[5] = {0};
+            char *cursor = temp;
+            for (size_t i = 0; i < 5u; ++i) {
+                fields[i] = cursor;
+                char *sep = strchr(cursor, ';');
+                if (sep) {
+                    *sep = '\0';
+                    cursor = sep + 1;
+                } else if (i != 4u) {
+                    break;
+                }
+            }
+            if (fields[2] && fields[2][0] != '\0') {
+                char *end = NULL;
+                errno = 0;
+                strtod(fields[2], &end);
+                if (errno != 0 || !end || *ProgTP_TextTrimLeft(end) != '\0') {
+                    header_seen = true;
+                    continue;
+                }
+            }
+            header_seen = true;
         }
         ProgTP_SensorReading reading;
         if (!ParseReadingLine(trimmed, &reading, timestamp, error, error_size)) {

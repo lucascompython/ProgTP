@@ -315,6 +315,7 @@ void SensorModule(ProgTP_AppState *state) {
             },
         }) {
             Button(516, "File", PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE, false, false);
+            Button(517, "Fetch API", PROGTP_APP_ACTION_SENSOR_FETCH_API, !state->sensor_api_fetch_request_pending && !state->sensor_api_fetch_in_flight, false);
             TextLine(state->sensor_input_path, 12, COLOR_MUTED);
         }
         CLAY(CLAY_ID("SensorSearch"), {

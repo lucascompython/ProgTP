@@ -243,13 +243,58 @@ bool ProgTP_RunLocalSensorImport(
     size_t error_size) {
     return ProgTP_SensorStoreImportText(
         store,
-        input_path && input_path[0] != '\0' ? input_path : "sensores_rack.txt",
+        input_path ? input_path : "sensores_rack.txt",
         "leituras_sensores.dat",
         "log_sensores.txt",
         "incidentes.dat",
         result,
         error,
         error_size);
+}
+
+bool ProgTP_FetchSensorApi(
+    const char *api_url,
+    ProgTP_SensorStore *store,
+    ProgTP_SensorImportResult *result,
+    char *error,
+    size_t error_size) {
+    if (!api_url || !store || !result) {
+        snprintf(error, error_size, "missing sensor API fetch parameters");
+        return false;
+    }
+
+    ResponseBuffer response = {0};
+    if (!PerformHttpRequest(api_url, "GET", NULL, 0, &response, error, error_size)) {
+        return false;
+    }
+
+    if (!response.data || response.length == 0) {
+        free(response.data);
+        snprintf(error, error_size, "sensor API returned empty response");
+        return false;
+    }
+
+    char *content = malloc(response.length + 1u);
+    if (!content) {
+        free(response.data);
+        snprintf(error, error_size, "not enough memory for sensor API response");
+        return false;
+    }
+    memcpy(content, response.data, response.length);
+    content[response.length] = '\0';
+    free(response.data);
+
+    bool ok = ProgTP_SensorStoreImportTextFromContent(
+        store,
+        content,
+        "leituras_sensores.dat",
+        "log_sensores.txt",
+        "incidentes.dat",
+        result,
+        error,
+        error_size);
+    free(content);
+    return ok;
 }
 
 bool ProgTP_LoadRemoteIncidents(const char *remote_url, ProgTP_IncidentStore *store, char *error, size_t error_size) {

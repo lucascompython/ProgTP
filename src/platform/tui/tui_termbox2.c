@@ -6,6 +6,8 @@
 #include "app.h"
 #include "command_client.h"
 
+#include <curl/curl.h>
+
 #define TB_IMPL
 #include <termbox2.h>
 
@@ -51,6 +53,17 @@ typedef struct {
     ProgTP_SensorStore store;
     ProgTP_SensorImportResult result;
 } SensorJob;
+
+typedef struct {
+    thrd_t thread;
+    atomic_bool done;
+    bool active;
+    bool has_thread;
+    bool ok;
+    char error[256];
+    ProgTP_SensorStore store;
+    ProgTP_SensorImportResult result;
+} SensorApiJob;
 
 static ProgTP_AppAction ActionFromTermboxEvent(const struct tb_event *event) {
     if (event->key == TB_KEY_BACKSPACE || event->key == TB_KEY_BACKSPACE2) {
@@ -134,6 +147,18 @@ static int SensorThreadMain(void *user_data) {
             job->error,
             sizeof(job->error))
         : ProgTP_RunLocalSensorImport(&job->store, &job->result, path, job->error, sizeof(job->error));
+    atomic_store_explicit(&job->done, true, memory_order_release);
+    return 0;
+}
+
+static int SensorApiThreadMain(void *user_data) {
+    SensorApiJob *job = user_data;
+    job->ok = ProgTP_FetchSensorApi(
+        "https://sensorlab.innominatum.pt/v1/sensors/export/legacy",
+        &job->store,
+        &job->result,
+        job->error,
+        sizeof(job->error));
     atomic_store_explicit(&job->done, true, memory_order_release);
     return 0;
 }
@@ -252,7 +277,41 @@ static void FinishSensorJob(SensorJob *job, ProgTP_AppState *app_state) {
     memset(job, 0, sizeof(*job));
 }
 
+static void StartSensorApiJob(SensorApiJob *job, const ProgTP_AppState *app_state) {
+    memset(job, 0, sizeof(*job));
+    atomic_init(&job->done, false);
+    job->active = true;
+    if (!ProgTP_SensorStoreCopy(&job->store, &app_state->sensors, job->error, sizeof(job->error))) {
+        job->ok = false;
+        atomic_store(&job->done, true);
+        return;
+    }
+    if (thrd_create(&job->thread, SensorApiThreadMain, job) != thrd_success) {
+        snprintf(job->error, sizeof(job->error), "could not start sensor API worker");
+        job->ok = false;
+        atomic_store(&job->done, true);
+        return;
+    }
+    job->has_thread = true;
+}
+
+static void FinishSensorApiJob(SensorApiJob *job, ProgTP_AppState *app_state) {
+    if (job->has_thread) {
+        int ignored = 0;
+        thrd_join(job->thread, &ignored);
+        job->has_thread = false;
+    }
+    if (job->ok) {
+        ProgTP_AppCompleteSensorApiFetch(app_state, &job->result, &job->store);
+    } else {
+        ProgTP_AppFailSensorApiFetch(app_state, job->error);
+    }
+    ProgTP_SensorStoreDestroy(&job->store);
+    memset(job, 0, sizeof(*job));
+}
+
 int main(int argc, char **argv) {
+    curl_global_init(CURL_GLOBAL_ALL);
     const char *remote_url = ProgTP_FindRemoteUrl(argc, argv);
     ProgTP_CommandResult command_result;
     char command_error[256] = {0};
@@ -312,6 +371,7 @@ int main(int argc, char **argv) {
     bool mouse_down = false;
     ConnectivityJob connectivity_job = {0};
     SensorJob sensor_job = {0};
+    SensorApiJob sensor_api_job = {0};
     while (running) {
         struct tb_event event;
         int event_result = tb_peek_event(&event, 16);
@@ -375,6 +435,13 @@ int main(int argc, char **argv) {
             StartSensorJob(&sensor_job, remote_url, &app_state);
         }
 
+        if (sensor_api_job.active && atomic_load_explicit(&sensor_api_job.done, memory_order_acquire)) {
+            FinishSensorApiJob(&sensor_api_job, &app_state);
+        }
+        if (!sensor_api_job.active && ProgTP_AppTakeSensorApiFetchRequest(&app_state)) {
+            StartSensorApiJob(&sensor_api_job, &app_state);
+        }
+
         commands = ProgTP_AppBuildLayout(&app_state, command_label, 0.016f);
 
         if (remote_url && ProgTP_AppInventoryDirty(&app_state)) {
@@ -404,9 +471,13 @@ int main(int argc, char **argv) {
     if (sensor_job.active) {
         FinishSensorJob(&sensor_job, &app_state);
     }
+    if (sensor_api_job.active) {
+        FinishSensorApiJob(&sensor_api_job, &app_state);
+    }
 
     Clay_Termbox_Close();
     free(clay_arena.memory);
     ProgTP_AppDestroy(&app_state);
+    curl_global_cleanup();
     return 0;
 }

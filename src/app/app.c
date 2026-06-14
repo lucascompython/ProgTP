@@ -325,6 +325,43 @@ void ProgTP_AppFailSensorImport(ProgTP_AppState *state, const char *error) {
         error ? error : "unknown error");
 }
 
+bool ProgTP_AppTakeSensorApiFetchRequest(ProgTP_AppState *state) {
+    if (!state->sensor_api_fetch_request_pending || state->sensor_api_fetch_in_flight) {
+        return false;
+    }
+    state->sensor_api_fetch_request_pending = false;
+    state->sensor_api_fetch_in_flight = true;
+    SetStatus(state, "Fetching sensor data from API");
+    return true;
+}
+
+void ProgTP_AppCompleteSensorApiFetch(
+    ProgTP_AppState *state,
+    const ProgTP_SensorImportResult *result,
+    const ProgTP_SensorStore *store) {
+    char copy_error[256] = {0};
+    if (!ProgTP_SensorStoreCopy(&state->sensors, store, copy_error, sizeof(copy_error))) {
+        ProgTP_AppFailSensorApiFetch(state, copy_error);
+        return;
+    }
+    state->sensor_import_result = *result;
+    state->sensor_has_import_result = true;
+    state->sensor_api_fetch_in_flight = false;
+    state->selected_sensor_index = state->sensors.length > 0 ? state->sensors.length - 1u : 0;
+    state->sensor_row_offset = 0;
+    SetStatus(state, result->summary);
+}
+
+void ProgTP_AppFailSensorApiFetch(ProgTP_AppState *state, const char *error) {
+    state->sensor_api_fetch_request_pending = false;
+    state->sensor_api_fetch_in_flight = false;
+    snprintf(
+        state->status,
+        sizeof(state->status),
+        "Sensor API fetch failed: %s",
+        error ? error : "unknown error");
+}
+
 bool ProgTP_AppTakeIncidentOperationRequest(ProgTP_AppState *state, ProgTP_IncidentOperationRequest *request) {
     if (!state->incident_operation_pending || state->incident_operation_in_flight) {
         return false;
@@ -714,6 +751,14 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE:
             OpenSensorFileModal(state);
             SetStatus(state, "Enter the sensor file path");
+            break;
+        case PROGTP_APP_ACTION_SENSOR_FETCH_API:
+            if (state->sensor_api_fetch_request_pending || state->sensor_api_fetch_in_flight) {
+                SetStatus(state, "Sensor API fetch is already running");
+            } else {
+                state->sensor_api_fetch_request_pending = true;
+                SetStatus(state, "Fetching sensor data from API...");
+            }
             break;
         case PROGTP_APP_ACTION_INCIDENT_PREVIOUS: MoveIncidentSelection(state, -1); break;
         case PROGTP_APP_ACTION_INCIDENT_NEXT: MoveIncidentSelection(state, 1); break;

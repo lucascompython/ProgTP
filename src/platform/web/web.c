@@ -432,3 +432,51 @@ PROGTP_WEB_EXPORT void FailConfigOperation(uint32_t message_length) {
     progtp_web_json[message_length] = '\0';
     ProgTP_AppFailConfigOperation(&progtp_web_app_state, progtp_web_json);
 }
+
+PROGTP_WEB_EXPORT bool TakeSensorApiFetchRequest(void) {
+    EnsureWebAppInitialized();
+    return ProgTP_AppTakeSensorApiFetchRequest(&progtp_web_app_state);
+}
+
+PROGTP_WEB_EXPORT bool ImportSensorApiTextContent(uint32_t text_length) {
+    EnsureWebAppInitialized();
+    if (text_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppFailSensorApiFetch(&progtp_web_app_state, "Sensor API text is too large");
+        return false;
+    }
+    progtp_web_json[text_length] = '\0';
+    ProgTP_SensorStore store;
+    ProgTP_SensorStoreInit(&store);
+    ProgTP_SensorImportResult result;
+    char error[256] = {0};
+    if (!ProgTP_SensorStoreCopy(&store, &progtp_web_app_state.sensors, error, sizeof(error))) {
+        ProgTP_AppFailSensorApiFetch(&progtp_web_app_state, error);
+        ProgTP_SensorStoreDestroy(&store);
+        return false;
+    }
+    bool ok = ProgTP_SensorStoreImportTextFromContent(
+        &store,
+        progtp_web_json,
+        "leituras_sensores.dat",
+        "log_sensores.txt",
+        "incidentes.dat",
+        &result,
+        error,
+        sizeof(error));
+    if (ok) {
+        ProgTP_AppCompleteSensorApiFetch(&progtp_web_app_state, &result, &store);
+    } else {
+        ProgTP_AppFailSensorApiFetch(&progtp_web_app_state, error[0] ? error : "Sensor API import failed");
+    }
+    ProgTP_SensorStoreDestroy(&store);
+    return ok;
+}
+
+PROGTP_WEB_EXPORT void FailSensorApiFetch(uint32_t message_length) {
+    EnsureWebAppInitialized();
+    if (message_length >= PROGTP_WEB_JSON_CAPACITY) {
+        message_length = PROGTP_WEB_JSON_CAPACITY - 1u;
+    }
+    progtp_web_json[message_length] = '\0';
+    ProgTP_AppFailSensorApiFetch(&progtp_web_app_state, progtp_web_json);
+}

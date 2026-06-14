@@ -2,6 +2,8 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <curl/curl.h>
+
 #define CLAY_IMPLEMENTATION
 #include <clay.h>
 
@@ -43,6 +45,16 @@ typedef struct {
     ProgTP_SensorStore store;
     ProgTP_SensorImportResult result;
 } SensorJob;
+
+typedef struct {
+    SDL_Thread *thread;
+    atomic_bool done;
+    bool active;
+    bool ok;
+    char error[256];
+    ProgTP_SensorStore store;
+    ProgTP_SensorImportResult result;
+} SensorApiJob;
 
 static Clay_Dimensions MeasureText(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data) {
     TTF_Font **fonts = (TTF_Font **)user_data;
@@ -165,6 +177,18 @@ static int SensorThreadMain(void *user_data) {
     return 0;
 }
 
+static int SensorApiThreadMain(void *user_data) {
+    SensorApiJob *job = user_data;
+    job->ok = ProgTP_FetchSensorApi(
+        "https://sensorlab.innominatum.pt/v1/sensors/export/legacy",
+        &job->store,
+        &job->result,
+        job->error,
+        sizeof(job->error));
+    atomic_store_explicit(&job->done, true, memory_order_release);
+    return 0;
+}
+
 static bool CopyInventory(ProgTP_EquipmentInventory *destination, const ProgTP_EquipmentInventory *source, char *error, size_t error_size) {
     ProgTP_EquipmentInventoryInit(destination);
     size_t count = ProgTP_EquipmentInventoryGetCount(source);
@@ -277,6 +301,38 @@ static void FinishSensorJob(SensorJob *job, ProgTP_AppState *app_state) {
     memset(job, 0, sizeof(*job));
 }
 
+static void StartSensorApiJob(SensorApiJob *job, const ProgTP_AppState *app_state) {
+    memset(job, 0, sizeof(*job));
+    atomic_init(&job->done, false);
+    job->active = true;
+    if (!ProgTP_SensorStoreCopy(&job->store, &app_state->sensors, job->error, sizeof(job->error))) {
+        job->ok = false;
+        atomic_store(&job->done, true);
+        return;
+    }
+    job->thread = SDL_CreateThread(SensorApiThreadMain, "progtp-sensor-api", job);
+    if (!job->thread) {
+        snprintf(job->error, sizeof(job->error), "could not start sensor API worker");
+        job->ok = false;
+        atomic_store(&job->done, true);
+    }
+}
+
+static void FinishSensorApiJob(SensorApiJob *job, ProgTP_AppState *app_state) {
+    if (job->thread) {
+        int ignored = 0;
+        SDL_WaitThread(job->thread, &ignored);
+        job->thread = NULL;
+    }
+    if (job->ok) {
+        ProgTP_AppCompleteSensorApiFetch(app_state, &job->result, &job->store);
+    } else {
+        ProgTP_AppFailSensorApiFetch(app_state, job->error);
+    }
+    ProgTP_SensorStoreDestroy(&job->store);
+    memset(job, 0, sizeof(*job));
+}
+
 int main(int argc, char **argv) {
     const char *remote_url = ProgTP_FindRemoteUrl(argc, argv);
     ProgTP_CommandResult command_result;
@@ -316,6 +372,7 @@ int main(int argc, char **argv) {
         SDL_Log("SDL init failed: %s", SDL_GetError());
         return 1;
     }
+    curl_global_init(CURL_GLOBAL_ALL);
 
     SDL_Window *window = NULL;
     Clay_SDL3RendererData renderer_data = {0};
@@ -366,6 +423,7 @@ int main(int argc, char **argv) {
     uint64_t previous_ticks = SDL_GetTicks();
     ConnectivityJob connectivity_job = {0};
     SensorJob sensor_job = {0};
+    SensorApiJob sensor_api_job = {0};
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -420,6 +478,13 @@ int main(int argc, char **argv) {
             StartSensorJob(&sensor_job, remote_url, &app_state);
         }
 
+        if (sensor_api_job.active && atomic_load_explicit(&sensor_api_job.done, memory_order_acquire)) {
+            FinishSensorApiJob(&sensor_api_job, &app_state);
+        }
+        if (!sensor_api_job.active && ProgTP_AppTakeSensorApiFetchRequest(&app_state)) {
+            StartSensorApiJob(&sensor_api_job, &app_state);
+        }
+
         Clay_RenderCommandArray commands = ProgTP_AppBuildLayout(&app_state, command_label, delta_time);
 
         if (remote_url && ProgTP_AppInventoryDirty(&app_state)) {
@@ -450,6 +515,9 @@ int main(int argc, char **argv) {
     if (sensor_job.active) {
         FinishSensorJob(&sensor_job, &app_state);
     }
+    if (sensor_api_job.active) {
+        FinishSensorApiJob(&sensor_api_job, &app_state);
+    }
 
     if (renderer_data.fonts) {
         TTF_CloseFont(renderer_data.fonts[0]);
@@ -462,6 +530,7 @@ int main(int argc, char **argv) {
     SDL_DestroyWindow(window);
     free(clay_arena.memory);
     ProgTP_AppDestroy(&app_state);
+    curl_global_cleanup();
     TTF_Quit();
     SDL_Quit();
     return 0;

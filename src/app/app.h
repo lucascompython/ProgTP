@@ -76,6 +76,7 @@ typedef enum {
     PROGTP_APP_ACTION_SENSOR_FILTER_ANOMALOUS,
     PROGTP_APP_ACTION_SENSOR_SEARCH_FIELD,
     PROGTP_APP_ACTION_SENSOR_CHOOSE_FILE,
+    PROGTP_APP_ACTION_SENSOR_FETCH_API,
     PROGTP_APP_ACTION_INCIDENT_PREVIOUS,
     PROGTP_APP_ACTION_INCIDENT_NEXT,
     PROGTP_APP_ACTION_INCIDENT_PAGE_PREVIOUS,
@@ -189,6 +190,8 @@ typedef struct {
     bool sensor_import_request_in_flight;
     bool sensor_filter_anomalous;
     bool sensor_has_import_result;
+    bool sensor_api_fetch_request_pending;
+    bool sensor_api_fetch_in_flight;
     uint64_t inventory_version;
     char storage_path[128];
     char status[320];
@@ -330,6 +333,12 @@ void ProgTP_AppCompleteSensorImport(
     const ProgTP_SensorStore *store);
 void ProgTP_AppFailConnectivityRequest(ProgTP_AppState *state, const char *error);
 void ProgTP_AppFailSensorImport(ProgTP_AppState *state, const char *error);
+bool ProgTP_AppTakeSensorApiFetchRequest(ProgTP_AppState *state);
+void ProgTP_AppCompleteSensorApiFetch(
+    ProgTP_AppState *state,
+    const ProgTP_SensorImportResult *result,
+    const ProgTP_SensorStore *store);
+void ProgTP_AppFailSensorApiFetch(ProgTP_AppState *state, const char *error);
 bool ProgTP_AppTakeIncidentOperationRequest(ProgTP_AppState *state, ProgTP_IncidentOperationRequest *request);
 void ProgTP_AppCompleteIncidentOperation(ProgTP_AppState *state, const ProgTP_IncidentOperationResponse *response);
 void ProgTP_AppFailIncidentOperation(ProgTP_AppState *state, const char *error);
