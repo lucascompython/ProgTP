@@ -355,3 +355,80 @@ PROGTP_WEB_EXPORT void FailIncidentOperation(uint32_t message_length) {
     progtp_web_json[message_length] = '\0';
     ProgTP_AppFailIncidentOperation(&progtp_web_app_state, progtp_web_json);
 }
+
+PROGTP_WEB_EXPORT bool ImportConfigHistoryJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppSetStatus(&progtp_web_app_state, "HTTP config history is too large");
+        return false;
+    }
+    ProgTP_ConfigHistory history;
+    ProgTP_ConfigHistoryInit(&history);
+    char error[256] = {0};
+    bool ok = ProgTP_ConfigHistoryFromJson(progtp_web_json, json_length, &history, error, sizeof(error));
+    if (ok) {
+        char copy_error[256] = {0};
+        if (!ProgTP_ConfigHistoryCopy(&progtp_web_app_state.config_history, &history, copy_error, sizeof(copy_error))) {
+            ok = false;
+            ProgTP_AppSetStatus(&progtp_web_app_state, copy_error);
+        } else {
+            ProgTP_AppSetStatus(&progtp_web_app_state, "Loaded config history from HTTP server");
+        }
+    } else {
+        ProgTP_AppSetStatus(&progtp_web_app_state, error[0] ? error : "Invalid HTTP config history JSON");
+    }
+    ProgTP_ConfigHistoryDestroy(&history);
+    return ok;
+}
+
+PROGTP_WEB_EXPORT bool TakeConfigOperationRequest(void) {
+    EnsureWebAppInitialized();
+    return progtp_web_app_state.config_operation_pending;
+}
+
+PROGTP_WEB_EXPORT uint32_t ExportConfigOperationRequestJson(void) {
+    EnsureWebAppInitialized();
+    ProgTP_ConfigOperationRequest request;
+    if (!ProgTP_AppTakeConfigOperationRequest(&progtp_web_app_state, &request)) {
+        return 0;
+    }
+    size_t json_length = 0;
+    char *json = ProgTP_ConfigOperationRequestToJson(&request, &json_length);
+    if (!json || json_length + 1u > PROGTP_WEB_JSON_CAPACITY) {
+        free(json);
+        ProgTP_AppFailConfigOperation(&progtp_web_app_state, "Could not serialize config operation request");
+        return 0;
+    }
+    memcpy(progtp_web_json, json, json_length);
+    progtp_web_json[json_length] = '\0';
+    free(json);
+    return (uint32_t)json_length;
+}
+
+PROGTP_WEB_EXPORT bool ImportConfigOperationResponseJson(uint32_t json_length) {
+    EnsureWebAppInitialized();
+    if (json_length >= PROGTP_WEB_JSON_CAPACITY) {
+        ProgTP_AppFailConfigOperation(&progtp_web_app_state, "Config operation response is too large");
+        return false;
+    }
+    ProgTP_ConfigOperationResponse response;
+    char error[256] = {0};
+    if (!ProgTP_ConfigOperationResponseFromJson(progtp_web_json, json_length, &response, error, sizeof(error))) {
+        ProgTP_AppFailConfigOperation(&progtp_web_app_state, error[0] ? error : "Invalid config operation response");
+        ProgTP_ConfigHistoryDestroy(&response.history);
+        return false;
+    }
+    ProgTP_AppCompleteConfigOperation(&progtp_web_app_state, &response);
+    bool ok = response.success;
+    ProgTP_ConfigHistoryDestroy(&response.history);
+    return ok;
+}
+
+PROGTP_WEB_EXPORT void FailConfigOperation(uint32_t message_length) {
+    EnsureWebAppInitialized();
+    if (message_length >= PROGTP_WEB_JSON_CAPACITY) {
+        message_length = PROGTP_WEB_JSON_CAPACITY - 1u;
+    }
+    progtp_web_json[message_length] = '\0';
+    ProgTP_AppFailConfigOperation(&progtp_web_app_state, progtp_web_json);
+}

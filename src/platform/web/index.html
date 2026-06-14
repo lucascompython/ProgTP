@@ -552,6 +552,61 @@
         }
     }
 
+    let configOperationInFlight = false;
+
+    async function loadConfigHistory() {
+        try {
+            const response = await fetch("/api/config", { cache: "no-store" });
+            if (!response.ok) {
+                return;
+            }
+            const jsonText = await response.text();
+            const length = writeSharedJson(jsonText);
+            if (length > 0) {
+                instance.exports.ImportConfigHistoryJson(length);
+            }
+        } catch {
+        }
+    }
+
+    async function runConfigOperationIfRequested() {
+        if (configOperationInFlight || !instance.exports.TakeConfigOperationRequest()) {
+            return;
+        }
+        configOperationInFlight = true;
+        try {
+            const requestLength = instance.exports.ExportConfigOperationRequestJson();
+            if (requestLength === 0) {
+                return;
+            }
+            const buffer = instance.exports.GetInventoryJsonBuffer();
+            const requestJson = textDecoder.decode(
+                new Uint8Array(instance.exports.memory.buffer, buffer, requestLength));
+            const response = await fetch("/api/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: requestJson,
+            });
+            const responseText = await response.text();
+            if (!response.ok) {
+                throw new Error(responseText || `HTTP ${response.status}`);
+            }
+            const length = writeSharedJson(responseText);
+            if (length > 0) {
+                instance.exports.ImportConfigOperationResponseJson(length);
+            }
+            await loadConfigHistory();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const messageLength = writeSharedJson(message);
+            if (instance.exports.FailConfigOperation) {
+                instance.exports.FailConfigOperation(messageLength);
+            }
+        } finally {
+            configOperationInFlight = false;
+        }
+    }
+
     async function init() {
         window.htmlRoot = document.body.appendChild(document.createElement('div'));
         window.canvasRoot = document.body.appendChild(document.createElement('canvas'));
@@ -684,6 +739,11 @@
                 ExportIncidentOperationRequestJson: module._ExportIncidentOperationRequestJson,
                 ImportIncidentOperationResponseJson: module._ImportIncidentOperationResponseJson,
                 FailIncidentOperation: module._FailIncidentOperation,
+                ImportConfigHistoryJson: module._ImportConfigHistoryJson,
+                TakeConfigOperationRequest: module._TakeConfigOperationRequest,
+                ExportConfigOperationRequestJson: module._ExportConfigOperationRequestJson,
+                ImportConfigOperationResponseJson: module._ImportConfigOperationResponseJson,
+                FailConfigOperation: module._FailConfigOperation,
                 InitializeClay: module._InitializeClay,
                 UpdateDrawFrame: module._UpdateDrawFrame,
             },
@@ -699,6 +759,7 @@
         await loadInventory();
         loadSensors();
         loadIncidents();
+        loadConfigHistory();
         loadCommandLabel();
         renderLoop(performance.now());
     }
@@ -880,6 +941,7 @@
             runConnectivityIfRequested();
             runSensorImportIfRequested();
             runIncidentOperationIfRequested();
+            runConfigOperationIfRequested();
             requestAnimationFrame(renderLoop);
             window.mouseDown = false;
         } catch (error) {

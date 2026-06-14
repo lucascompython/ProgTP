@@ -11,6 +11,7 @@
 #define PROGTP_SERVER_CUSTOM_OUTPUT_PATH "resultado_comando.txt"
 #define PROGTP_SERVER_MONITORING_LOG_PATH "log_monitorizacao.txt"
 #define PROGTP_SERVER_INCIDENT_PATH "incidentes.dat"
+#define PROGTP_SERVER_CONFIG_PATH "configuracoes.dat"
 #define PROGTP_SERVER_SENSOR_INPUT_PATH "sensores_rack.txt"
 #define PROGTP_SERVER_SENSOR_BINARY_PATH "leituras_sensores.dat"
 #define PROGTP_SERVER_SENSOR_LOG_PATH "log_sensores.txt"
@@ -366,6 +367,113 @@ static void OnApiIncidents(fio_http_s *request) {
     SendText(request, 405, "method not allowed\n");
 }
 
+static void OnApiConfig(fio_http_s *request) {
+    if (!StrEquals(fio_http_opath(request), "/api/config")) {
+        fio_http_send_error_response(request, 404);
+        return;
+    }
+
+    char error[256] = {0};
+    ProgTP_EquipmentInventory inventory;
+    ProgTP_EquipmentInventoryInit(&inventory);
+    if (!ProgTP_EquipmentInventoryLoadBinary(&inventory, PROGTP_SERVER_INVENTORY_PATH, error, sizeof(error))) {
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        SendText(request, 500, error[0] ? error : "could not load equipment inventory");
+        return;
+    }
+    ProgTP_ConfigHistory history;
+    ProgTP_ConfigHistoryInit(&history);
+    if (!ProgTP_ConfigHistoryLoad(&history, PROGTP_SERVER_CONFIG_PATH, error, sizeof(error))) {
+        ProgTP_ConfigHistoryDestroy(&history);
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        SendText(request, 500, error[0] ? error : "could not load config history");
+        return;
+    }
+
+    if (StrEquals(fio_http_method(request), "GET")) {
+        size_t json_length = 0;
+        char *json = ProgTP_ConfigHistoryToJson(&history, &json_length);
+        ProgTP_ConfigHistoryDestroy(&history);
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        if (!json) {
+            fio_http_send_error_response(request, 500);
+            return;
+        }
+        SendJson(request, 200, json, json_length);
+        return;
+    }
+
+    if (StrEquals(fio_http_method(request), "POST")) {
+        fio_http_body_seek(request, 0);
+        fio_str_info_s body = fio_http_body_read(request, (size_t)-1);
+        ProgTP_ConfigOperationRequest op_request = {0};
+        if (body.len == 0 ||
+            !ProgTP_ConfigOperationRequestFromJson(body.buf, body.len, &op_request, error, sizeof(error))) {
+            ProgTP_ConfigHistoryDestroy(&history);
+            ProgTP_EquipmentInventoryDestroy(&inventory);
+            SendText(request, 400, error[0] ? error : "invalid config operation request");
+            return;
+        }
+        ProgTP_ConfigOperationResponse op_response = {0};
+        bool ok = false;
+        if (op_request.operation == PROGTP_CONFIG_OP_UNDO) {
+            ok = ProgTP_ConfigHistoryUndo(&history, &inventory, error, sizeof(error));
+            if (ok) {
+                snprintf(op_response.message, sizeof(op_response.message), "Undid last change");
+            }
+        } else if (op_request.operation == PROGTP_CONFIG_OP_REDO) {
+            ok = ProgTP_ConfigHistoryRedo(&history, &inventory, error, sizeof(error));
+            if (ok) {
+                snprintf(op_response.message, sizeof(op_response.message), "Redid change");
+            }
+        } else if (op_request.operation == PROGTP_CONFIG_OP_IMPORT) {
+            const char *import_path = op_request.path[0] != '\0'
+                ? op_request.path
+                : PROGTP_SERVER_CONFIG_PATH;
+            ok = ProgTP_ConfigHistoryImportFromFile(&history, import_path, error, sizeof(error));
+            if (ok) {
+                snprintf(op_response.message, sizeof(op_response.message), "Imported config history from %.280s", import_path);
+            }
+        } else if (op_request.operation == PROGTP_CONFIG_OP_DELETE) {
+            ok = ProgTP_ConfigHistoryDeleteById(&history, op_request.entry_id, error, sizeof(error));
+            if (ok) {
+                snprintf(op_response.message, sizeof(op_response.message), "Removed config entry #%u", op_request.entry_id);
+            }
+        } else {
+            snprintf(error, sizeof(error), "unknown config operation");
+        }
+        if (ok) {
+            op_response.success = true;
+            if (!ProgTP_ConfigHistorySave(&history, PROGTP_SERVER_CONFIG_PATH, error, sizeof(error))) {
+                ok = false;
+            } else if (!ProgTP_EquipmentInventorySaveBinary(&inventory, PROGTP_SERVER_INVENTORY_PATH, error, sizeof(error))) {
+                ok = false;
+            }
+        }
+        if (ok) {
+            op_response.history = history;
+            size_t json_length = 0;
+            char *json = ProgTP_ConfigOperationResponseToJson(&op_response, &json_length);
+            ProgTP_ConfigHistoryDestroy(&history);
+            ProgTP_EquipmentInventoryDestroy(&inventory);
+            if (!json) {
+                fio_http_send_error_response(request, 500);
+                return;
+            }
+            SendJson(request, 200, json, json_length);
+            return;
+        }
+        ProgTP_ConfigHistoryDestroy(&history);
+        ProgTP_EquipmentInventoryDestroy(&inventory);
+        SendText(request, 500, error[0] ? error : "config operation failed");
+        return;
+    }
+
+    ProgTP_ConfigHistoryDestroy(&history);
+    ProgTP_EquipmentInventoryDestroy(&inventory);
+    SendText(request, 405, "method not allowed\n");
+}
+
 static void OnStaticMiss(fio_http_s *request) {
     SendText(request, 404, "ProgTP server. Try /api/inventory, /api/sensors, /api/connectivity/run, /api/hello, or /index.html\n");
 }
@@ -442,6 +550,14 @@ int main(int argc, char **argv) {
             .on_http = OnApiIncidents,
             .public_folder = FIO_STR_INFO2("", 0)) != 0) {
         fprintf(stderr, "failed to register /api/incidents route\n");
+        return 1;
+    }
+    if (fio_http_route(
+            listener,
+            "/api/config",
+            .on_http = OnApiConfig,
+            .public_folder = FIO_STR_INFO2("", 0)) != 0) {
+        fprintf(stderr, "failed to register /api/config route\n");
         return 1;
     }
 

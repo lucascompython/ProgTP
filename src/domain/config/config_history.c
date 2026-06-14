@@ -325,6 +325,83 @@ size_t ProgTP_ConfigHistoryUndoneCount(const ProgTP_ConfigHistory *history) {
     return history->length > history->undo_index ? history->length - history->undo_index : 0u;
 }
 
+bool ProgTP_ConfigHistoryDeleteById(
+    ProgTP_ConfigHistory *history,
+    uint32_t id,
+    char *error,
+    size_t error_size) {
+    if (!history) {
+        ProgTP_SetError(error, error_size, "missing config history");
+        return false;
+    }
+    for (size_t i = 0; i < history->length; ++i) {
+        if (history->items[i].id == id) {
+            if (i < history->undo_index) {
+                --history->undo_index;
+            }
+            memmove(
+                &history->items[i],
+                &history->items[i + 1u],
+                (history->length - i - 1u) * sizeof(history->items[0]));
+            --history->length;
+            return true;
+        }
+    }
+    ProgTP_SetError(error, error_size, "config entry not found");
+    return false;
+}
+
+bool ProgTP_ConfigHistoryImportFromFile(
+    ProgTP_ConfigHistory *history,
+    const char *path,
+    char *error,
+    size_t error_size) {
+    if (!history || !path) {
+        ProgTP_SetError(error, error_size, "missing config history or path");
+        return false;
+    }
+    ProgTP_ConfigHistory imported;
+    ProgTP_ConfigHistoryInit(&imported);
+    if (!ProgTP_ConfigHistoryLoad(&imported, path, error, error_size)) {
+        ProgTP_ConfigHistoryDestroy(&imported);
+        return false;
+    }
+    uint32_t base_id = history->next_id;
+    for (size_t i = 0; i < imported.length; ++i) {
+        ProgTP_ConfigEntry *entry = &imported.items[i];
+        entry->id = base_id++;
+        if (history->next_id <= entry->id) {
+            history->next_id = entry->id + 1u;
+        }
+        char append_error[256] = {0};
+        if (!ProgTP_ConfigHistoryRecord(
+                history,
+                entry->op_type,
+                &entry->before,
+                &entry->after,
+                entry->description,
+                append_error,
+                sizeof(append_error))) {
+            ProgTP_SetError(error, error_size, append_error[0] ? append_error : "could not import config entry");
+            ProgTP_ConfigHistoryDestroy(&imported);
+            return false;
+        }
+        size_t last = history->length - 1u;
+        history->items[last].equipment_code = entry->equipment_code;
+        ProgTP_TextCopy(
+            history->items[last].equipment_name,
+            sizeof(history->items[last].equipment_name),
+            entry->equipment_name);
+        ProgTP_TextCopy(
+            history->items[last].timestamp,
+            sizeof(history->items[last].timestamp),
+            entry->timestamp);
+        history->items[last].entry_state = entry->entry_state;
+    }
+    ProgTP_ConfigHistoryDestroy(&imported);
+    return true;
+}
+
 const char *ProgTP_ConfigOpName(ProgTP_ConfigOpType op_type) {
     switch (op_type) {
         case PROGTP_CONFIG_OP_ADD: return "Add";

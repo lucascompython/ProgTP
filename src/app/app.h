@@ -1,6 +1,7 @@
 #ifndef PROGTP_APP_H
 #define PROGTP_APP_H
 
+#include "config_history.h"
 #include "connectivity.h"
 #include "equipment_inventory.h"
 #include "incident_store.h"
@@ -94,6 +95,16 @@ typedef enum {
     PROGTP_APP_ACTION_INCIDENT_PRIORITY_LOW,
     PROGTP_APP_ACTION_INCIDENT_PRIORITY_MEDIUM,
     PROGTP_APP_ACTION_INCIDENT_PRIORITY_HIGH,
+    PROGTP_APP_ACTION_CONFIG_PREVIOUS,
+    PROGTP_APP_ACTION_CONFIG_NEXT,
+    PROGTP_APP_ACTION_CONFIG_PAGE_PREVIOUS,
+    PROGTP_APP_ACTION_CONFIG_PAGE_NEXT,
+    PROGTP_APP_ACTION_CONFIG_UNDO,
+    PROGTP_APP_ACTION_CONFIG_REDO,
+    PROGTP_APP_ACTION_CONFIG_FILTER_ALL,
+    PROGTP_APP_ACTION_CONFIG_FILTER_UNDONE,
+    PROGTP_APP_ACTION_CONFIG_IMPORT,
+    PROGTP_APP_ACTION_CONFIG_DELETE,
 } ProgTP_AppAction;
 
 typedef enum {
@@ -121,6 +132,8 @@ typedef enum {
     PROGTP_APP_MODAL_ADD_INCIDENT,
     PROGTP_APP_MODAL_UPDATE_INCIDENT,
     PROGTP_APP_MODAL_REMOVE_INCIDENT,
+    PROGTP_APP_MODAL_CONFIG_FILE,
+    PROGTP_APP_MODAL_REMOVE_CONFIG,
 } ProgTP_AppModal;
 
 typedef enum {
@@ -226,6 +239,7 @@ typedef struct {
     size_t sensor_row_offset;
     char sensor_selected_text[320];
     char sensor_input_path[512];
+    char config_input_path[512];
     ProgTP_IncidentStore incidents;
     size_t selected_incident_index;
     uint32_t incident_filter_state;
@@ -253,6 +267,21 @@ typedef struct {
     char incident_form_display_text[PROGTP_APP_INCIDENT_FORM_FIELD_COUNT][PROGTP_INCIDENT_DESCRIPTION_SIZE + 2u];
     ProgTP_IncidentOperationResponse incident_operation_result;
     ProgTP_IncidentOperationRequest pending_incident_operation;
+    ProgTP_ConfigHistory config_history;
+    size_t selected_config_index;
+    uint32_t config_filter_state;
+    bool config_operation_pending;
+    bool config_operation_in_flight;
+    ProgTP_ConfigOperationRequest pending_config_operation;
+    ProgTP_ConfigOperationResponse config_operation_result;
+    char config_metric_total_text[32];
+    char config_metric_applied_text[32];
+    char config_metric_undone_text[32];
+    char config_selected_text[640];
+    char config_row_page_text[96];
+    char config_row_texts[12][256];
+    size_t config_row_count;
+    size_t config_row_offset;
 } ProgTP_AppState;
 
 void ProgTP_HandleClayError(Clay_ErrorData errorData);
@@ -284,6 +313,18 @@ void ProgTP_AppFailIncidentOperation(ProgTP_AppState *state, const char *error);
 void ProgTP_AppUseLoadedIncidents(ProgTP_AppState *state, const ProgTP_IncidentStore *store, const char *status);
 bool ProgTP_AppIncidentOperationPending(const ProgTP_AppState *state);
 bool ProgTP_AppIncidentOperationInFlight(const ProgTP_AppState *state);
+bool ProgTP_AppTakeConfigOperationRequest(ProgTP_AppState *state, ProgTP_ConfigOperationRequest *request);
+void ProgTP_AppCompleteConfigOperation(ProgTP_AppState *state, const ProgTP_ConfigOperationResponse *response);
+void ProgTP_AppFailConfigOperation(ProgTP_AppState *state, const char *error);
+void ProgTP_AppQueueConfigOperation(
+    ProgTP_AppState *state,
+    const ProgTP_ConfigOperationRequest *request);
+void ProgTP_AppRecordConfigChange(
+    ProgTP_AppState *state,
+    ProgTP_ConfigOpType op_type,
+    const ProgTP_Equipment *before,
+    const ProgTP_Equipment *after,
+    const char *description);
 void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action);
 void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint);
 Clay_RenderCommandArray ProgTP_AppBuildLayout(ProgTP_AppState *state, const char *target_name, float delta_time);

@@ -1,6 +1,7 @@
 #ifndef PROGTP_PROTOCOL_H
 #define PROGTP_PROTOCOL_H
 
+#include "config_history.h"
 #include "connectivity.h"
 #include "equipment_inventory.h"
 #include "incident_store.h"
@@ -33,6 +34,25 @@ typedef struct {
     uint32_t created_count;
     char message[128];
 } ProgTP_IncidentOperationResponse;
+
+typedef enum {
+    PROGTP_CONFIG_OP_UNDO = 0,
+    PROGTP_CONFIG_OP_REDO,
+    PROGTP_CONFIG_OP_IMPORT,
+    PROGTP_CONFIG_OP_DELETE,
+} ProgTP_ConfigOperationType;
+
+typedef struct {
+    ProgTP_ConfigOperationType operation;
+    uint32_t entry_id;
+    char path[512];
+} ProgTP_ConfigOperationRequest;
+
+typedef struct {
+    bool success;
+    char message[128];
+    ProgTP_ConfigHistory history;
+} ProgTP_ConfigOperationResponse;
 
 void ProgTP_RunLocalCommand(ProgTP_CommandResult *result);
 char *ProgTP_CommandResultToJson(const ProgTP_CommandResult *result, size_t *json_length);
@@ -96,6 +116,32 @@ bool ProgTP_IncidentOperationResponseFromJson(
     const char *json,
     size_t json_length,
     ProgTP_IncidentOperationResponse *response,
+    char *error,
+    size_t error_size);
+
+char *ProgTP_ConfigHistoryToJson(const ProgTP_ConfigHistory *history, size_t *json_length);
+bool ProgTP_ConfigHistoryFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConfigHistory *history,
+    char *error,
+    size_t error_size);
+char *ProgTP_ConfigOperationRequestToJson(
+    const ProgTP_ConfigOperationRequest *request,
+    size_t *json_length);
+bool ProgTP_ConfigOperationRequestFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConfigOperationRequest *request,
+    char *error,
+    size_t error_size);
+char *ProgTP_ConfigOperationResponseToJson(
+    const ProgTP_ConfigOperationResponse *response,
+    size_t *json_length);
+bool ProgTP_ConfigOperationResponseFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConfigOperationResponse *response,
     char *error,
     size_t error_size);
 

@@ -79,12 +79,382 @@ static bool ReadRequiredString(yyjson_val *object, const char *name, char *desti
     return true;
 }
 
+static void ReadOptionalString(yyjson_val *object, const char *name, char *destination, size_t destination_size);
+static bool ReadRequiredUint32(yyjson_val *object, const char *name, uint32_t *destination, char *error, size_t error_size);
+static bool ReadRequiredBool(yyjson_val *object, const char *name, bool *destination, char *error, size_t error_size);
+static void AppendEquipmentJson(yyjson_mut_doc *doc, yyjson_mut_val *parent, const char *key, const ProgTP_Equipment *equipment);
+static void AppendConfigOpTypeJson(yyjson_mut_doc *doc, yyjson_mut_val *parent, const char *key, ProgTP_ConfigOpType op);
+static const char *ConfigEntryStateName(ProgTP_ConfigEntryState state);
+
+static yyjson_mut_val *ConfigHistoryToJsonValue(yyjson_mut_doc *doc, const ProgTP_ConfigHistory *history) {
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_uint(doc, root, "next_id", history ? history->next_id : 1u);
+    yyjson_mut_obj_add_uint(doc, root, "undo_index", (uint32_t)(history ? history->undo_index : 0u));
+    yyjson_mut_val *entries = yyjson_mut_arr(doc);
+    yyjson_mut_obj_add_val(doc, root, "entries", entries);
+    if (history) {
+        for (size_t i = 0; i < history->length; ++i) {
+            const ProgTP_ConfigEntry *entry = &history->items[i];
+            yyjson_mut_val *obj = yyjson_mut_obj(doc);
+            yyjson_mut_arr_add_val(entries, obj);
+            yyjson_mut_obj_add_uint(doc, obj, "id", entry->id);
+            yyjson_mut_obj_add_uint(doc, obj, "equipment_code", entry->equipment_code);
+            yyjson_mut_obj_add_str(doc, obj, "equipment_name", entry->equipment_name);
+            yyjson_mut_obj_add_str(doc, obj, "timestamp", entry->timestamp);
+            AppendConfigOpTypeJson(doc, obj, "op_type", entry->op_type);
+            yyjson_mut_obj_add_str(doc, obj, "description", entry->description);
+            yyjson_mut_obj_add_str(doc, obj, "entry_state", ConfigEntryStateName(entry->entry_state));
+            AppendEquipmentJson(doc, obj, "before", &entry->before);
+            AppendEquipmentJson(doc, obj, "after", &entry->after);
+        }
+    }
+    return root;
+}
+
+static void AppendEquipmentJson(yyjson_mut_doc *doc, yyjson_mut_val *parent, const char *key, const ProgTP_Equipment *equipment) {
+    yyjson_mut_val *obj = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_val(doc, parent, key, obj);
+    yyjson_mut_obj_add_uint(doc, obj, "code", equipment->code);
+    yyjson_mut_obj_add_str(doc, obj, "name", equipment->name);
+    yyjson_mut_obj_add_str(doc, obj, "type", equipment->type);
+    yyjson_mut_obj_add_str(doc, obj, "brand", equipment->brand);
+    yyjson_mut_obj_add_str(doc, obj, "model", equipment->model);
+    yyjson_mut_obj_add_str(doc, obj, "ip_address", equipment->ip_address);
+    yyjson_mut_obj_add_str(doc, obj, "mac_address", equipment->mac_address);
+    yyjson_mut_obj_add_str(doc, obj, "location", equipment->location);
+    yyjson_mut_obj_add_str(doc, obj, "state", ProgTP_EquipmentStateName(equipment->state));
+    yyjson_mut_obj_add_str(doc, obj, "last_checked", equipment->last_checked);
+    yyjson_mut_obj_add_bool(doc, obj, "has_pending_incidents", equipment->has_pending_incidents);
+}
+
+static bool ReadEquipmentJson(yyjson_val *object, ProgTP_Equipment *equipment, char *error, size_t error_size) {
+    yyjson_val *code_value = yyjson_obj_get(object, "code");
+    yyjson_val *state_value = yyjson_obj_get(object, "state");
+    if (!yyjson_is_uint(code_value) || yyjson_get_uint(code_value) > UINT32_MAX || !yyjson_is_str(state_value)) {
+        ProgTP_SetError(error, error_size, "equipment snapshot has invalid code or state");
+        return false;
+    }
+    memset(equipment, 0, sizeof(*equipment));
+    equipment->code = (uint32_t)yyjson_get_uint(code_value);
+    if (!ReadRequiredString(object, "name", equipment->name, sizeof(equipment->name), error, error_size) ||
+        !ReadRequiredString(object, "type", equipment->type, sizeof(equipment->type), error, error_size)) {
+        return false;
+    }
+    ReadOptionalString(object, "brand", equipment->brand, sizeof(equipment->brand));
+    ReadOptionalString(object, "model", equipment->model, sizeof(equipment->model));
+    ReadOptionalString(object, "ip_address", equipment->ip_address, sizeof(equipment->ip_address));
+    ReadOptionalString(object, "mac_address", equipment->mac_address, sizeof(equipment->mac_address));
+    ReadOptionalString(object, "location", equipment->location, sizeof(equipment->location));
+    ReadOptionalString(object, "last_checked", equipment->last_checked, sizeof(equipment->last_checked));
+    if (!ProgTP_EquipmentStateFromString(yyjson_get_str(state_value), &equipment->state)) {
+        ProgTP_SetError(error, error_size, "equipment snapshot has unknown state");
+        return false;
+    }
+    yyjson_val *pending = yyjson_obj_get(object, "has_pending_incidents");
+    if (yyjson_is_bool(pending)) {
+        equipment->has_pending_incidents = yyjson_get_bool(pending);
+    }
+    return true;
+}
+
+static const char *ConfigEntryStateName(ProgTP_ConfigEntryState state) {
+    switch (state) {
+        case PROGTP_CONFIG_ENTRY_APPLIED: return "applied";
+        case PROGTP_CONFIG_ENTRY_UNDONE: return "undone";
+    }
+    return "unknown";
+}
+
+static bool ReadConfigEntryState(yyjson_val *object, const char *name, ProgTP_ConfigEntryState *state, char *error, size_t error_size) {
+    yyjson_val *value = yyjson_obj_get(object, name);
+    if (!yyjson_is_str(value)) {
+        ProgTP_SetError(error, error_size, "config entry state must be a string");
+        return false;
+    }
+    const char *text = yyjson_get_str(value);
+    if (ProgTP_TextEqualsIgnoreCase(text, "applied")) {
+        *state = PROGTP_CONFIG_ENTRY_APPLIED;
+    } else if (ProgTP_TextEqualsIgnoreCase(text, "undone")) {
+        *state = PROGTP_CONFIG_ENTRY_UNDONE;
+    } else {
+        ProgTP_SetError(error, error_size, "config entry state is unknown");
+        return false;
+    }
+    return true;
+}
+
+static bool ReadConfigOpType(yyjson_val *object, const char *name, ProgTP_ConfigOpType *op, char *error, size_t error_size) {
+    yyjson_val *value = yyjson_obj_get(object, name);
+    if (!yyjson_is_str(value)) {
+        ProgTP_SetError(error, error_size, "config op must be a string");
+        return false;
+    }
+    const char *text = yyjson_get_str(value);
+    if (ProgTP_TextEqualsIgnoreCase(text, "add")) {
+        *op = PROGTP_CONFIG_OP_ADD;
+    } else if (ProgTP_TextEqualsIgnoreCase(text, "update")) {
+        *op = PROGTP_CONFIG_OP_UPDATE;
+    } else if (ProgTP_TextEqualsIgnoreCase(text, "remove")) {
+        *op = PROGTP_CONFIG_OP_REMOVE;
+    } else if (ProgTP_TextEqualsIgnoreCase(text, "set_state")) {
+        *op = PROGTP_CONFIG_OP_SET_STATE;
+    } else if (ProgTP_TextEqualsIgnoreCase(text, "set_pending")) {
+        *op = PROGTP_CONFIG_OP_SET_PENDING;
+    } else {
+        ProgTP_SetError(error, error_size, "config op is unknown");
+        return false;
+    }
+    return true;
+}
+
+static void AppendConfigOpTypeJson(yyjson_mut_doc *doc, yyjson_mut_val *parent, const char *key, ProgTP_ConfigOpType op) {
+    const char *name = "unknown";
+    switch (op) {
+        case PROGTP_CONFIG_OP_ADD: name = "add"; break;
+        case PROGTP_CONFIG_OP_UPDATE: name = "update"; break;
+        case PROGTP_CONFIG_OP_REMOVE: name = "remove"; break;
+        case PROGTP_CONFIG_OP_SET_STATE: name = "set_state"; break;
+        case PROGTP_CONFIG_OP_SET_PENDING: name = "set_pending"; break;
+    }
+    yyjson_mut_obj_add_str(doc, parent, key, name);
+}
+
+char *ProgTP_ConfigHistoryToJson(const ProgTP_ConfigHistory *history, size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_doc_set_root(doc, ConfigHistoryToJsonValue(doc, history));
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_ConfigHistoryFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConfigHistory *history,
+    char *error,
+    size_t error_size) {
+    if (!history) {
+        ProgTP_SetError(error, error_size, "missing config history");
+        return false;
+    }
+    ProgTP_ConfigHistoryClear(history);
+    if (!json || json_length == 0) {
+        return true;
+    }
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid config history JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *entries_value = yyjson_obj_get(root, "entries");
+    yyjson_val *next_id_value = yyjson_obj_get(root, "next_id");
+    yyjson_val *undo_index_value = yyjson_obj_get(root, "undo_index");
+    if (!yyjson_is_obj(root) || !yyjson_is_arr(entries_value)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "config history JSON must contain entries array");
+        return false;
+    }
+    if (yyjson_is_uint(next_id_value) && yyjson_get_uint(next_id_value) <= UINT32_MAX) {
+        history->next_id = (uint32_t)yyjson_get_uint(next_id_value);
+    }
+    yyjson_val *entry = NULL;
+    yyjson_arr_iter iter = yyjson_arr_iter_with(entries_value);
+    while ((entry = yyjson_arr_iter_next(&iter)) != NULL) {
+        if (!yyjson_is_obj(entry)) {
+            yyjson_doc_free(doc);
+            ProgTP_SetError(error, error_size, "config entry must be an object");
+            return false;
+        }
+        ProgTP_ConfigEntry item = {0};
+        if (!ReadRequiredUint32(entry, "id", &item.id, error, error_size) ||
+            !ReadRequiredUint32(entry, "equipment_code", &item.equipment_code, error, error_size) ||
+            !ReadRequiredString(entry, "equipment_name", item.equipment_name, sizeof(item.equipment_name), error, error_size) ||
+            !ReadRequiredString(entry, "timestamp", item.timestamp, sizeof(item.timestamp), error, error_size) ||
+            !ReadConfigOpType(entry, "op_type", &item.op_type, error, error_size) ||
+            !ReadRequiredString(entry, "description", item.description, sizeof(item.description), error, error_size) ||
+            !ReadConfigEntryState(entry, "entry_state", &item.entry_state, error, error_size)) {
+            yyjson_doc_free(doc);
+            return false;
+        }
+        yyjson_val *before_value = yyjson_obj_get(entry, "before");
+        yyjson_val *after_value = yyjson_obj_get(entry, "after");
+        if (yyjson_is_obj(before_value) && !ReadEquipmentJson(before_value, &item.before, error, error_size)) {
+            yyjson_doc_free(doc);
+            return false;
+        }
+        if (yyjson_is_obj(after_value) && !ReadEquipmentJson(after_value, &item.after, error, error_size)) {
+            yyjson_doc_free(doc);
+            return false;
+        }
+        char err[256] = {0};
+        if (!ProgTP_ConfigHistoryRecord(history, item.op_type, &item.before, &item.after, item.description, err, sizeof(err))) {
+            yyjson_doc_free(doc);
+            ProgTP_SetError(error, error_size, err[0] ? err : "config history append failed");
+            return false;
+        }
+        size_t last_index = history->length - 1u;
+        if (item.entry_state == PROGTP_CONFIG_ENTRY_UNDONE) {
+            history->items[last_index].entry_state = PROGTP_CONFIG_ENTRY_UNDONE;
+            if (history->undo_index > 0) {
+                --history->undo_index;
+            }
+        }
+    }
+    if (yyjson_is_uint(undo_index_value) && yyjson_get_uint(undo_index_value) <= history->length) {
+        history->undo_index = (size_t)yyjson_get_uint(undo_index_value);
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
+static const char *ConfigOperationName(ProgTP_ConfigOperationType op) {
+    switch (op) {
+        case PROGTP_CONFIG_OP_UNDO: return "undo";
+        case PROGTP_CONFIG_OP_REDO: return "redo";
+        case PROGTP_CONFIG_OP_IMPORT: return "import";
+        case PROGTP_CONFIG_OP_DELETE: return "delete";
+    }
+    return "unknown";
+}
+
+char *ProgTP_ConfigOperationRequestToJson(
+    const ProgTP_ConfigOperationRequest *request,
+    size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_str(doc, root, "operation", ConfigOperationName(request->operation));
+    yyjson_mut_obj_add_uint(doc, root, "entry_id", request->entry_id);
+    yyjson_mut_obj_add_str(doc, root, "path", request->path);
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_ConfigOperationRequestFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConfigOperationRequest *request,
+    char *error,
+    size_t error_size) {
+    if (!request) {
+        ProgTP_SetError(error, error_size, "missing config operation request");
+        return false;
+    }
+    memset(request, 0, sizeof(*request));
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid config operation request JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *op_value = yyjson_obj_get(root, "operation");
+    if (!yyjson_is_obj(root) || !yyjson_is_str(op_value)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "config operation request must contain operation string");
+        return false;
+    }
+    const char *op_text = yyjson_get_str(op_value);
+    if (ProgTP_TextEqualsIgnoreCase(op_text, "undo")) {
+        request->operation = PROGTP_CONFIG_OP_UNDO;
+    } else if (ProgTP_TextEqualsIgnoreCase(op_text, "redo")) {
+        request->operation = PROGTP_CONFIG_OP_REDO;
+    } else if (ProgTP_TextEqualsIgnoreCase(op_text, "import")) {
+        request->operation = PROGTP_CONFIG_OP_IMPORT;
+    } else if (ProgTP_TextEqualsIgnoreCase(op_text, "delete")) {
+        request->operation = PROGTP_CONFIG_OP_DELETE;
+    } else {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "config operation request has unknown operation");
+        return false;
+    }
+    yyjson_val *entry_id_value = yyjson_obj_get(root, "entry_id");
+    if (yyjson_is_uint(entry_id_value) && yyjson_get_uint(entry_id_value) <= UINT32_MAX) {
+        request->entry_id = (uint32_t)yyjson_get_uint(entry_id_value);
+    }
+    yyjson_val *path_value = yyjson_obj_get(root, "path");
+    if (yyjson_is_str(path_value)) {
+        ProgTP_TextCopy(request->path, sizeof(request->path), yyjson_get_str(path_value));
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
+char *ProgTP_ConfigOperationResponseToJson(
+    const ProgTP_ConfigOperationResponse *response,
+    size_t *json_length) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    if (!doc) {
+        return NULL;
+    }
+    yyjson_mut_val *root = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, root);
+    yyjson_mut_obj_add_bool(doc, root, "success", response ? response->success : false);
+    yyjson_mut_obj_add_str(doc, root, "message", response ? response->message : "");
+    yyjson_mut_obj_add_val(doc, root, "history", ConfigHistoryToJsonValue(doc, response ? &response->history : NULL));
+    char *json = yyjson_mut_write(doc, 0, json_length);
+    yyjson_mut_doc_free(doc);
+    return json;
+}
+
+bool ProgTP_ConfigOperationResponseFromJson(
+    const char *json,
+    size_t json_length,
+    ProgTP_ConfigOperationResponse *response,
+    char *error,
+    size_t error_size) {
+    if (!response) {
+        ProgTP_SetError(error, error_size, "missing config operation response");
+        return false;
+    }
+    memset(response, 0, sizeof(*response));
+    yyjson_doc *doc = yyjson_read(json, json_length, 0);
+    if (!doc) {
+        ProgTP_SetError(error, error_size, "invalid config operation response JSON");
+        return false;
+    }
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_obj(root)) {
+        yyjson_doc_free(doc);
+        ProgTP_SetError(error, error_size, "config operation response must be an object");
+        return false;
+    }
+    yyjson_val *success_value = yyjson_obj_get(root, "success");
+    yyjson_val *message_value = yyjson_obj_get(root, "message");
+    yyjson_val *history_value = yyjson_obj_get(root, "history");
+    response->success = yyjson_is_bool(success_value) ? yyjson_get_bool(success_value) : false;
+    if (yyjson_is_str(message_value)) {
+        ProgTP_TextCopy(response->message, sizeof(response->message), yyjson_get_str(message_value));
+    }
+    if (yyjson_is_obj(history_value)) {
+        yyjson_mut_doc *sub_doc = yyjson_mut_doc_new(NULL);
+        if (sub_doc) {
+            yyjson_mut_doc_set_root(sub_doc, (yyjson_mut_val *)history_value);
+            size_t history_json_length = 0;
+            char *history_json = yyjson_mut_write(sub_doc, 0, &history_json_length);
+            if (history_json) {
+                char err[256] = {0};
+                ProgTP_ConfigHistoryFromJson(history_json, history_json_length, &response->history, err, sizeof(err));
+                free(history_json);
+            }
+            yyjson_mut_doc_free(sub_doc);
+        }
+    }
+    yyjson_doc_free(doc);
+    return true;
+}
+
 static void ReadOptionalString(yyjson_val *object, const char *name, char *destination, size_t destination_size) {
     yyjson_val *value = yyjson_obj_get(object, name);
     ProgTP_TextCopy(destination, destination_size, yyjson_is_str(value) ? yyjson_get_str(value) : "");
 }
-
-static bool ReadRequiredUint32(yyjson_val *object, const char *name, uint32_t *destination, char *error, size_t error_size);
 
 char *ProgTP_EquipmentInventoryToJson(const ProgTP_EquipmentInventory *inventory, size_t *json_length) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);

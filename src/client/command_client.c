@@ -359,3 +359,113 @@ bool ProgTP_RunLocalIncidentOperation(
     snprintf(error, error_size, "unknown incident operation");
     return false;
 }
+
+bool ProgTP_LoadRemoteConfigHistory(
+    const char *remote_url,
+    ProgTP_ConfigHistory *history,
+    char *error,
+    size_t error_size) {
+    if (!history) {
+        snprintf(error, error_size, "missing config history");
+        return false;
+    }
+    char endpoint[512];
+    BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/config");
+    ResponseBuffer response = {0};
+    if (!PerformHttpRequest(endpoint, "GET", NULL, 0, &response, error, error_size)) {
+        return false;
+    }
+    bool parsed = ProgTP_ConfigHistoryFromJson(response.data, response.length, history, error, error_size);
+    free(response.data);
+    if (!parsed && error_size > 0 && error[0] == '\0') {
+        snprintf(error, error_size, "server returned invalid config history JSON");
+    }
+    return parsed;
+}
+
+bool ProgTP_RunRemoteConfigOperation(
+    const char *remote_url,
+    const ProgTP_ConfigOperationRequest *request,
+    ProgTP_ConfigOperationResponse *response,
+    char *error,
+    size_t error_size) {
+    if (!request || !response) {
+        snprintf(error, error_size, "missing config operation parameters");
+        return false;
+    }
+    size_t json_length = 0;
+    char *json = ProgTP_ConfigOperationRequestToJson(request, &json_length);
+    if (!json) {
+        snprintf(error, error_size, "failed to serialize config operation request");
+        return false;
+    }
+    char endpoint[512];
+    BuildEndpoint(endpoint, sizeof(endpoint), remote_url, "api/config");
+    ResponseBuffer response_buffer = {0};
+    bool requested = PerformHttpRequest(endpoint, "POST", json, json_length, &response_buffer, error, error_size);
+    free(json);
+    if (!requested) {
+        return false;
+    }
+    bool parsed = ProgTP_ConfigOperationResponseFromJson(
+        response_buffer.data,
+        response_buffer.length,
+        response,
+        error,
+        error_size);
+    free(response_buffer.data);
+    if (!parsed && error_size > 0 && error[0] == '\0') {
+        snprintf(error, error_size, "server returned invalid config operation JSON");
+    }
+    return parsed;
+}
+
+bool ProgTP_RunLocalConfigOperation(
+    ProgTP_ConfigHistory *history,
+    ProgTP_EquipmentInventory *inventory,
+    const ProgTP_ConfigOperationRequest *request,
+    ProgTP_ConfigOperationResponse *response,
+    char *error,
+    size_t error_size) {
+    if (!history || !inventory || !request || !response) {
+        snprintf(error, error_size, "missing config operation parameters");
+        return false;
+    }
+    memset(response, 0, sizeof(*response));
+    const char *config_path = "configuracoes.dat";
+    bool ok = false;
+    if (request->operation == PROGTP_CONFIG_OP_UNDO) {
+        ok = ProgTP_ConfigHistoryUndo(history, inventory, error, error_size);
+        if (ok) {
+            snprintf(response->message, sizeof(response->message), "Undid last change");
+        }
+    } else if (request->operation == PROGTP_CONFIG_OP_REDO) {
+        ok = ProgTP_ConfigHistoryRedo(history, inventory, error, error_size);
+        if (ok) {
+            snprintf(response->message, sizeof(response->message), "Redid change");
+        }
+    } else if (request->operation == PROGTP_CONFIG_OP_IMPORT) {
+        const char *import_path = request->path[0] != '\0' ? request->path : config_path;
+        ok = ProgTP_ConfigHistoryImportFromFile(history, import_path, error, error_size);
+        if (ok) {
+            snprintf(response->message, sizeof(response->message), "Imported config history from %.280s", import_path);
+        }
+    } else if (request->operation == PROGTP_CONFIG_OP_DELETE) {
+        ok = ProgTP_ConfigHistoryDeleteById(history, request->entry_id, error, error_size);
+        if (ok) {
+            snprintf(response->message, sizeof(response->message), "Removed config entry #%u", request->entry_id);
+        }
+    } else {
+        snprintf(error, error_size, "unknown config operation");
+        return false;
+    }
+    if (!ok) {
+        return false;
+    }
+    if (!ProgTP_ConfigHistorySave(history, config_path, error, error_size)) {
+        return false;
+    }
+    response->success = true;
+    response->history = *history;
+    return true;
+}

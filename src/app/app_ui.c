@@ -18,6 +18,16 @@ static void HandleUiInteraction(Clay_ElementId element_id, Clay_PointerData poin
         return;
     }
     uintptr_t value = (uintptr_t)user_data;
+    if (value >= PROGTP_UI_CONFIG_SELECT_BASE) {
+        uint32_t entry_id = (uint32_t)(value - PROGTP_UI_CONFIG_SELECT_BASE);
+        for (size_t i = 0; i < progtp_interaction_state->config_history.length; ++i) {
+            if (progtp_interaction_state->config_history.items[i].id == entry_id) {
+                progtp_interaction_state->selected_config_index = i;
+                break;
+            }
+        }
+        return;
+    }
     if (value >= PROGTP_UI_INCIDENT_FORM_FIELD_BASE) {
         ProgTP_AppIncidentFormField field = (ProgTP_AppIncidentFormField)(value - PROGTP_UI_INCIDENT_FORM_FIELD_BASE);
         if (field >= 0 && field < PROGTP_APP_INCIDENT_FORM_FIELD_COUNT) {

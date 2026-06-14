@@ -56,6 +56,90 @@ void SubmitSensorFile(ProgTP_AppState *state) {
     snprintf(state->status, sizeof(state->status), "Sensor file: %.280s", state->sensor_input_path);
 }
 
+void OpenConfigFileModal(ProgTP_AppState *state) {
+    state->modal = PROGTP_APP_MODAL_CONFIG_FILE;
+    state->input_mode = PROGTP_APP_INPUT_NONE;
+}
+
+void SubmitConfigFile(ProgTP_AppState *state) {
+    const char *path = state->config_input_path[0] != '\0' ? state->config_input_path : "configuracoes.dat";
+    if (!state->persistence_enabled) {
+        ProgTP_ConfigOperationRequest request = {0};
+        request.operation = PROGTP_CONFIG_OP_IMPORT;
+        ProgTP_TextCopy(request.path, sizeof(request.path), path);
+        ProgTP_AppQueueConfigOperation(state, &request);
+        CloseModal(state);
+        return;
+    }
+    char error[256] = {0};
+    if (!ProgTP_ConfigHistoryImportFromFile(&state->config_history, path, error, sizeof(error))) {
+        snprintf(state->status, sizeof(state->status), "Config import failed: %s", error);
+        CloseModal(state);
+        return;
+    }
+    if (state->persistence_enabled) {
+        char save_error[256] = {0};
+        if (!ProgTP_ConfigHistorySave(&state->config_history, "configuracoes.dat", save_error, sizeof(save_error))) {
+            snprintf(state->status, sizeof(state->status), "Config save failed: %s", save_error);
+            CloseModal(state);
+            return;
+        }
+    }
+    state->config_row_offset = 0;
+    state->selected_config_index = state->config_history.length > 0 ? state->config_history.length - 1u : 0u;
+    snprintf(state->status, sizeof(state->status), "Imported config history from %.280s", path);
+    CloseModal(state);
+}
+
+void OpenRemoveConfigModal(ProgTP_AppState *state) {
+    if (state->config_history.length == 0 || state->selected_config_index >= state->config_history.length) {
+        SetStatus(state, "No configuration entry selected");
+        return;
+    }
+    state->modal = PROGTP_APP_MODAL_REMOVE_CONFIG;
+    state->input_mode = PROGTP_APP_INPUT_NONE;
+    const ProgTP_ConfigEntry *entry = &state->config_history.items[state->selected_config_index];
+    snprintf(
+        state->modal_message,
+        sizeof(state->modal_message),
+        "Remove config entry #%u (%s)?",
+        entry->id,
+        ProgTP_ConfigOpName(entry->op_type));
+}
+
+void ConfirmRemoveConfig(ProgTP_AppState *state) {
+    if (state->selected_config_index >= state->config_history.length) {
+        CloseModal(state);
+        return;
+    }
+    uint32_t id = state->config_history.items[state->selected_config_index].id;
+    if (!state->persistence_enabled) {
+        ProgTP_ConfigOperationRequest request = {0};
+        request.operation = PROGTP_CONFIG_OP_DELETE;
+        request.entry_id = id;
+        ProgTP_AppQueueConfigOperation(state, &request);
+        CloseModal(state);
+        return;
+    }
+    char error[256] = {0};
+    if (!ProgTP_ConfigHistoryDeleteById(&state->config_history, id, error, sizeof(error))) {
+        snprintf(state->status, sizeof(state->status), "Config delete failed: %s", error);
+        CloseModal(state);
+        return;
+    }
+    if (state->persistence_enabled) {
+        char save_error[256] = {0};
+        if (!ProgTP_ConfigHistorySave(&state->config_history, "configuracoes.dat", save_error, sizeof(save_error))) {
+            snprintf(state->status, sizeof(state->status), "Config save failed: %s", save_error);
+        }
+    }
+    if (state->selected_config_index >= state->config_history.length && state->config_history.length > 0) {
+        state->selected_config_index = state->config_history.length - 1u;
+    }
+    snprintf(state->status, sizeof(state->status), "Removed config entry #%u", id);
+    CloseModal(state);
+}
+
 void OpenAddModal(ProgTP_AppState *state) {
     state->modal = PROGTP_APP_MODAL_ADD_EQUIPMENT;
     state->input_mode = PROGTP_APP_INPUT_NONE;
@@ -125,6 +209,11 @@ void SubmitEquipmentForm(ProgTP_AppState *state) {
             ProgTP_Equipment *added = ProgTP_EquipmentInventoryFindByCode(&state->inventory, created.code);
             if (added) {
                 added->has_pending_incidents = state->form_pending;
+                ProgTP_Equipment before = *added;
+                before.has_pending_incidents = false;
+                char desc[PROGTP_CONFIG_DESCRIPTION_SIZE];
+                snprintf(desc, sizeof(desc), "Added equipment #%u %s", added->code, added->name);
+                ProgTP_AppRecordConfigChange(state, PROGTP_CONFIG_OP_ADD, &before, added, desc);
             }
             state->selected_code = created.code;
             snprintf(state->status, sizeof(state->status), "Added %s", created.name);
@@ -135,10 +224,18 @@ void SubmitEquipmentForm(ProgTP_AppState *state) {
         }
     } else if (state->modal == PROGTP_APP_MODAL_UPDATE_EQUIPMENT) {
         uint32_t code = state->selected_code;
+        const ProgTP_Equipment *previous = ProgTP_EquipmentInventoryFindByCodeConst(&state->inventory, code);
+        ProgTP_Equipment before = previous ? *previous : (ProgTP_Equipment){0};
         if (ProgTP_EquipmentInventoryUpdate(&state->inventory, code, &input, error, sizeof(error))) {
             if (!ProgTP_EquipmentInventorySetPendingIncidents(&state->inventory, code, state->form_pending, error, sizeof(error))) {
                 snprintf(state->status, sizeof(state->status), "Update failed: %s", error);
                 return;
+            }
+            ProgTP_Equipment *updated = ProgTP_EquipmentInventoryFindByCode(&state->inventory, code);
+            if (updated) {
+                char desc[PROGTP_CONFIG_DESCRIPTION_SIZE];
+                snprintf(desc, sizeof(desc), "Updated equipment #%u %s", code, updated->name);
+                ProgTP_AppRecordConfigChange(state, PROGTP_CONFIG_OP_UPDATE, &before, updated, desc);
             }
             SetStatus(state, "Updated selected equipment");
             CloseModal(state);
@@ -151,8 +248,22 @@ void SubmitEquipmentForm(ProgTP_AppState *state) {
 
 void ConfirmRemoveSelected(ProgTP_AppState *state) {
     uint32_t code = state->selected_code;
+    ProgTP_Equipment before;
+    bool had_before = false;
+    const ProgTP_Equipment *existing = ProgTP_EquipmentInventoryFindByCodeConst(&state->inventory, code);
+    if (existing) {
+        before = *existing;
+        had_before = true;
+    } else {
+        memset(&before, 0, sizeof(before));
+    }
     char error[256] = {0};
     if (ProgTP_EquipmentInventoryRemove(&state->inventory, code, error, sizeof(error))) {
+        if (had_before) {
+            char desc[PROGTP_CONFIG_DESCRIPTION_SIZE];
+            snprintf(desc, sizeof(desc), "Removed equipment #%u %s", code, before.name);
+            ProgTP_AppRecordConfigChange(state, PROGTP_CONFIG_OP_REMOVE, &before, &before, desc);
+        }
         CloseModal(state);
         SetStatus(state, "Removed selected equipment");
         EnsureSelectionInCurrentView(state);
@@ -192,6 +303,10 @@ static void SubmitModal(ProgTP_AppState *state) {
         SubmitEquipmentForm(state);
     } else if (state->modal == PROGTP_APP_MODAL_SENSOR_FILE) {
         SubmitSensorFile(state);
+    } else if (state->modal == PROGTP_APP_MODAL_CONFIG_FILE) {
+        SubmitConfigFile(state);
+    } else if (state->modal == PROGTP_APP_MODAL_REMOVE_CONFIG) {
+        ConfirmRemoveConfig(state);
     }
 }
 
@@ -260,6 +375,29 @@ bool HandleModalAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         switch (action) {
             case PROGTP_APP_ACTION_INPUT_SUBMIT:
             case PROGTP_APP_ACTION_FORM_SUBMIT: ConfirmRemoveIncident(state); return true;
+            case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
+            default: return true;
+        }
+    }
+    if (state->modal == PROGTP_APP_MODAL_CONFIG_FILE) {
+        switch (action) {
+            case PROGTP_APP_ACTION_INPUT_BACKSPACE: {
+                size_t len = strlen(state->config_input_path);
+                if (len > 0) {
+                    state->config_input_path[len - 1u] = '\0';
+                }
+                return true;
+            }
+            case PROGTP_APP_ACTION_INPUT_SUBMIT:
+            case PROGTP_APP_ACTION_FORM_SUBMIT: SubmitConfigFile(state); return true;
+            case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
+            default: return true;
+        }
+    }
+    if (state->modal == PROGTP_APP_MODAL_REMOVE_CONFIG) {
+        switch (action) {
+            case PROGTP_APP_ACTION_INPUT_SUBMIT:
+            case PROGTP_APP_ACTION_FORM_SUBMIT: ConfirmRemoveConfig(state); return true;
             case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
             default: return true;
         }
@@ -467,6 +605,93 @@ static void SensorFileModal(ProgTP_AppState *state) {
         }) {
             Button(520, "Cancel", PROGTP_APP_ACTION_FORM_CANCEL, false, false);
             Button(521, "Save", PROGTP_APP_ACTION_FORM_SUBMIT, true, false);
+        }
+    }
+}
+
+static void ConfigFileModal(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("ConfigFileModal"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = { CLAY_SIZING_GROW(.min = 320.0f, .max = 500.0f), CLAY_SIZING_FIT(0) },
+            .padding = CLAY_PADDING_ALL(18),
+            .childGap = 14,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(8),
+    }) {
+        CLAY(CLAY_ID("ConfigFileHeader"), {
+            .layout = {
+                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 4,
+            },
+        }) {
+            TextLine("Config history file path", 21, COLOR_TEXT);
+            TextLine(state->status, 13, COLOR_MUTED);
+        }
+        CLAY(CLAY_ID("ConfigFileInput"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(ControlHeight()) },
+                .padding = { 10, 10, 0, 0 },
+                .childAlignment = { CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER },
+            },
+            .backgroundColor = COLOR_WHITE,
+            .border = {
+                .color = COLOR_ACCENT,
+                .width = {
+                    state->terminal_rendering ? 0 : 1,
+                    state->terminal_rendering ? 0 : 1,
+                    state->terminal_rendering ? 0 : 1,
+                    state->terminal_rendering ? 0 : 1,
+                    0,
+                },
+            },
+            .cornerRadius = CLAY_CORNER_RADIUS(5),
+        }) {
+            TextLine(state->config_input_path, 13, COLOR_TEXT);
+        }
+        TextLine("Type the path of a configuracoes.dat file and press Enter to import", 12, COLOR_MUTED);
+        CLAY(CLAY_ID("ConfigFileActions"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 8,
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            Button(530, "Cancel", PROGTP_APP_ACTION_FORM_CANCEL, false, false);
+            Button(531, "Import", PROGTP_APP_ACTION_FORM_SUBMIT, true, false);
+        }
+    }
+}
+
+static void RemoveConfigConfirmModal(ProgTP_AppState *state) {
+    CLAY(CLAY_ID("RemoveConfigModal"), {
+        .layout = {
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+            .sizing = { CLAY_SIZING_GROW(.min = 300.0f, .max = 480.0f), CLAY_SIZING_FIT(0) },
+            .padding = CLAY_PADDING_ALL(18),
+            .childGap = 14,
+        },
+        .backgroundColor = COLOR_SURFACE,
+        .border = { .color = COLOR_LINE, .width = { 1, 1, 1, 1, 0 } },
+        .cornerRadius = CLAY_CORNER_RADIUS(8),
+    }) {
+        TextLine("Remove config entry", 21, COLOR_TEXT);
+        TextLine(state->modal_message, 14, COLOR_MUTED);
+        if (state->status[0] != '\0') {
+            TextLine(state->status, 13, COLOR_DANGER);
+        }
+        CLAY(CLAY_ID("RemoveConfigActions"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                .childGap = 8,
+                .childAlignment = { .x = CLAY_ALIGN_X_RIGHT, .y = CLAY_ALIGN_Y_CENTER },
+            },
+        }) {
+            Button(540, "Cancel", PROGTP_APP_ACTION_FORM_CANCEL, false, false);
+            Button(541, "Remove", PROGTP_APP_ACTION_FORM_SUBMIT, false, true);
         }
     }
 }
@@ -830,6 +1055,10 @@ void ModalOverlay(ProgTP_AppState *state, Clay_Dimensions layout_dimensions) {
             IncidentFormModal(state);
         } else if (state->modal == PROGTP_APP_MODAL_REMOVE_INCIDENT) {
             RemoveIncidentConfirmModal(state);
+        } else if (state->modal == PROGTP_APP_MODAL_CONFIG_FILE) {
+            ConfigFileModal(state);
+        } else if (state->modal == PROGTP_APP_MODAL_REMOVE_CONFIG) {
+            RemoveConfigConfirmModal(state);
         } else {
             EquipmentFormModal(state);
         }

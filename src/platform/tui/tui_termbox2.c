@@ -86,6 +86,11 @@ static ProgTP_AppAction ActionFromTermboxEvent(const struct tb_event *event) {
         case 's': case 'S': return PROGTP_APP_ACTION_INCIDENT_START;
         case 't': case 'T': return PROGTP_APP_ACTION_INCIDENT_AUTO_IMPORT;
         case 'q': case 'Q': return PROGTP_APP_ACTION_INCIDENT_ADD;
+        case 'z': case 'Z': return PROGTP_APP_ACTION_CONFIG_UNDO;
+        case 'y': case 'Y': return PROGTP_APP_ACTION_CONFIG_REDO;
+        case 'f': case 'F': return PROGTP_APP_ACTION_CONFIG_FILTER_ALL;
+        case 'b': case 'B': return PROGTP_APP_ACTION_CONFIG_IMPORT;
+        case 'x': case 'X': return PROGTP_APP_ACTION_CONFIG_DELETE;
         case 'w': case 'W': return PROGTP_APP_ACTION_SAVE;
         case 'l': case 'L': return PROGTP_APP_ACTION_LOAD;
         default: break;

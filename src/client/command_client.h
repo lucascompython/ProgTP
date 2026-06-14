@@ -50,4 +50,23 @@ bool ProgTP_RunLocalIncidentOperation(
     char *error,
     size_t error_size);
 
+bool ProgTP_LoadRemoteConfigHistory(
+    const char *remote_url,
+    ProgTP_ConfigHistory *history,
+    char *error,
+    size_t error_size);
+bool ProgTP_RunRemoteConfigOperation(
+    const char *remote_url,
+    const ProgTP_ConfigOperationRequest *request,
+    ProgTP_ConfigOperationResponse *response,
+    char *error,
+    size_t error_size);
+bool ProgTP_RunLocalConfigOperation(
+    ProgTP_ConfigHistory *history,
+    ProgTP_EquipmentInventory *inventory,
+    const ProgTP_ConfigOperationRequest *request,
+    ProgTP_ConfigOperationResponse *response,
+    char *error,
+    size_t error_size);
+
 #endif

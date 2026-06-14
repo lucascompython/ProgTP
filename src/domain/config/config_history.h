@@ -73,6 +73,18 @@ bool ProgTP_ConfigHistoryRedo(
     char *error,
     size_t error_size);
 
+bool ProgTP_ConfigHistoryDeleteById(
+    ProgTP_ConfigHistory *history,
+    uint32_t id,
+    char *error,
+    size_t error_size);
+
+bool ProgTP_ConfigHistoryImportFromFile(
+    ProgTP_ConfigHistory *history,
+    const char *path,
+    char *error,
+    size_t error_size);
+
 bool ProgTP_ConfigHistoryCanUndo(const ProgTP_ConfigHistory *history);
 bool ProgTP_ConfigHistoryCanRedo(const ProgTP_ConfigHistory *history);
 size_t ProgTP_ConfigHistoryAppliedCount(const ProgTP_ConfigHistory *history);

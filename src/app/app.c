@@ -184,6 +184,7 @@ void ProgTP_AppInit(ProgTP_AppState *state, bool persistence_enabled, const char
     state->active_module = 1;
     state->persistence_enabled = persistence_enabled;
     snprintf(state->sensor_input_path, sizeof(state->sensor_input_path), "%s", "sensores_rack.txt");
+    snprintf(state->config_input_path, sizeof(state->config_input_path), "%s", "configuracoes.dat");
     snprintf(
         state->connectivity_result.summary,
         sizeof(state->connectivity_result.summary),
@@ -193,15 +194,20 @@ void ProgTP_AppInit(ProgTP_AppState *state, bool persistence_enabled, const char
     ProgTP_EquipmentInventoryInit(&state->inventory);
     ProgTP_SensorStoreInit(&state->sensors);
     ProgTP_IncidentStoreInit(&state->incidents);
+    ProgTP_ConfigHistoryInit(&state->config_history);
     LoadInventory(state);
     LoadSensors(state);
     ProgTP_IncidentStoreLoad(&state->incidents, "incidentes.dat", state->status, sizeof(state->status));
+    if (state->persistence_enabled) {
+        ProgTP_ConfigHistoryLoad(&state->config_history, "configuracoes.dat", state->status, sizeof(state->status));
+    }
 }
 
 void ProgTP_AppDestroy(ProgTP_AppState *state) {
     PersistIfEnabled(state);
     PersistSensorsIfEnabled(state);
     ProgTP_IncidentStoreDestroy(&state->incidents);
+    ProgTP_ConfigHistoryDestroy(&state->config_history);
     ProgTP_SensorStoreDestroy(&state->sensors);
     ProgTP_EquipmentInventoryDestroy(&state->inventory);
 }
@@ -373,6 +379,86 @@ bool ProgTP_AppIncidentOperationInFlight(const ProgTP_AppState *state) {
     return state->incident_operation_in_flight;
 }
 
+void ProgTP_AppQueueConfigOperation(
+    ProgTP_AppState *state,
+    const ProgTP_ConfigOperationRequest *request) {
+    if (!state || !request) {
+        return;
+    }
+    state->pending_config_operation = *request;
+    state->config_operation_pending = true;
+    state->config_operation_in_flight = false;
+    SetStatus(state, "Sending config operation to server");
+}
+
+bool ProgTP_AppTakeConfigOperationRequest(ProgTP_AppState *state, ProgTP_ConfigOperationRequest *request) {
+    if (!state || !request) {
+        return false;
+    }
+    if (!state->config_operation_pending || state->config_operation_in_flight) {
+        return false;
+    }
+    *request = state->pending_config_operation;
+    state->config_operation_pending = false;
+    state->config_operation_in_flight = true;
+    return true;
+}
+
+void ProgTP_AppCompleteConfigOperation(ProgTP_AppState *state, const ProgTP_ConfigOperationResponse *response) {
+    if (!state || !response) {
+        return;
+    }
+    state->config_operation_result = *response;
+    state->config_operation_in_flight = false;
+    if (response->success && response->history.length > 0) {
+        char copy_error[256] = {0};
+        if (ProgTP_ConfigHistoryCopy(&state->config_history, &response->history, copy_error, sizeof(copy_error))) {
+            state->config_row_offset = 0;
+            state->selected_config_index = state->config_history.length > 0
+                ? state->config_history.length - 1u
+                : 0u;
+        } else {
+            snprintf(state->status, sizeof(state->status), "Config copy failed: %s", copy_error);
+        }
+    }
+    SetStatus(state, response->message[0] ? response->message : "Config operation completed");
+}
+
+void ProgTP_AppFailConfigOperation(ProgTP_AppState *state, const char *error) {
+    if (!state) {
+        return;
+    }
+    state->config_operation_pending = false;
+    state->config_operation_in_flight = false;
+    snprintf(
+        state->status,
+        sizeof(state->status),
+        "Config operation failed: %s",
+        error ? error : "unknown error");
+}
+
+void ProgTP_AppRecordConfigChange(
+    ProgTP_AppState *state,
+    ProgTP_ConfigOpType op_type,
+    const ProgTP_Equipment *before,
+    const ProgTP_Equipment *after,
+    const char *description) {
+    if (!state || !after) {
+        return;
+    }
+    char error[256] = {0};
+    if (!ProgTP_ConfigHistoryRecord(&state->config_history, op_type, before, after, description, error, sizeof(error))) {
+        snprintf(state->status, sizeof(state->status), "Config record failed: %s", error);
+        return;
+    }
+    if (state->persistence_enabled) {
+        char save_error[256] = {0};
+        if (!ProgTP_ConfigHistorySave(&state->config_history, "configuracoes.dat", save_error, sizeof(save_error))) {
+            snprintf(state->status, sizeof(state->status), "Config save failed: %s", save_error);
+        }
+    }
+}
+
 static void StartInput(ProgTP_AppState *state, ProgTP_AppInputMode mode) {
     state->input_mode = mode;
     if (mode != PROGTP_APP_INPUT_CONNECTIVITY_COMMAND) {
@@ -486,6 +572,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 MoveSensorSelection(state, 1);
             } else if (state->active_module == 4) {
                 MoveIncidentSelection(state, 1);
+            } else if (state->active_module == 5) {
+                MoveConfigSelection(state, 1);
             } else {
                 MoveSelection(state, 1);
             }
@@ -495,6 +583,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 MoveSensorSelection(state, -1);
             } else if (state->active_module == 4) {
                 MoveIncidentSelection(state, -1);
+            } else if (state->active_module == 5) {
+                MoveConfigSelection(state, -1);
             } else {
                 MoveSelection(state, -1);
             }
@@ -644,6 +734,28 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             state->incident_filter_state = 3;
             state->incident_row_offset = 0;
             break;
+        case PROGTP_APP_ACTION_CONFIG_PAGE_PREVIOUS: PageConfig(state, -1); break;
+        case PROGTP_APP_ACTION_CONFIG_PAGE_NEXT: PageConfig(state, 1); break;
+        case PROGTP_APP_ACTION_CONFIG_PREVIOUS: MoveConfigSelection(state, -1); break;
+        case PROGTP_APP_ACTION_CONFIG_NEXT: MoveConfigSelection(state, 1); break;
+        case PROGTP_APP_ACTION_CONFIG_IMPORT:
+            if (state->active_module == 5) {
+                OpenConfigFileModal(state);
+            }
+            break;
+        case PROGTP_APP_ACTION_CONFIG_DELETE:
+            if (state->active_module == 5) {
+                OpenRemoveConfigModal(state);
+            }
+            break;
+        case PROGTP_APP_ACTION_CONFIG_FILTER_ALL:
+            state->config_filter_state = state->config_filter_state == 0 ? 2u : 0u;
+            state->config_row_offset = 0;
+            break;
+        case PROGTP_APP_ACTION_CONFIG_FILTER_UNDONE:
+            state->config_filter_state = 2;
+            state->config_row_offset = 0;
+            break;
         case PROGTP_APP_ACTION_INCIDENT_ADD:
             OpenAddIncidentModal(state);
             break;
@@ -710,6 +822,56 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_INCIDENT_PRIORITY_LOW:
         case PROGTP_APP_ACTION_INCIDENT_PRIORITY_MEDIUM:
         case PROGTP_APP_ACTION_INCIDENT_PRIORITY_HIGH:
+            break;
+        case PROGTP_APP_ACTION_CONFIG_UNDO: {
+            if (!state->persistence_enabled) {
+                ProgTP_ConfigOperationRequest request = {0};
+                request.operation = PROGTP_CONFIG_OP_UNDO;
+                ProgTP_AppQueueConfigOperation(state, &request);
+                break;
+            }
+            char error[256] = {0};
+            if (!ProgTP_ConfigHistoryUndo(&state->config_history, &state->inventory, error, sizeof(error))) {
+                snprintf(state->status, sizeof(state->status), "Undo failed: %s", error);
+            } else {
+                state->config_row_offset = 0;
+                if (state->config_history.undo_index < state->config_history.length &&
+                    state->config_history.items[state->config_history.undo_index].id > 0) {
+                    state->selected_config_index = state->config_history.undo_index;
+                } else if (state->config_history.undo_index > 0) {
+                    state->selected_config_index = state->config_history.undo_index - 1u;
+                }
+                EnsureSelection(state);
+                state->inventory_dirty = true;
+                ++state->inventory_version;
+                MarkInventoryChanged(state);
+                SetStatus(state, "Undid last change");
+            }
+            break;
+        }
+        case PROGTP_APP_ACTION_CONFIG_REDO: {
+            if (!state->persistence_enabled) {
+                ProgTP_ConfigOperationRequest request = {0};
+                request.operation = PROGTP_CONFIG_OP_REDO;
+                ProgTP_AppQueueConfigOperation(state, &request);
+                break;
+            }
+            char error[256] = {0};
+            if (!ProgTP_ConfigHistoryRedo(&state->config_history, &state->inventory, error, sizeof(error))) {
+                snprintf(state->status, sizeof(state->status), "Redo failed: %s", error);
+            } else {
+                state->config_row_offset = 0;
+                if (state->config_history.undo_index > 0) {
+                    state->selected_config_index = state->config_history.undo_index - 1u;
+                }
+                EnsureSelection(state);
+                state->inventory_dirty = true;
+                ++state->inventory_version;
+                MarkInventoryChanged(state);
+                SetStatus(state, "Redid change");
+            }
+            break;
+        }
         case PROGTP_APP_ACTION_NONE:
         case PROGTP_APP_ACTION_INPUT_BACKSPACE:
         case PROGTP_APP_ACTION_INPUT_SUBMIT:
@@ -743,6 +905,15 @@ void ProgTP_AppHandleTextInput(ProgTP_AppState *state, uint32_t codepoint) {
         }
         state->sensor_input_path[length] = (char)codepoint;
         state->sensor_input_path[length + 1u] = '\0';
+        return;
+    }
+    if (state->modal == PROGTP_APP_MODAL_CONFIG_FILE) {
+        size_t length = strlen(state->config_input_path);
+        if (length + 1u >= sizeof(state->config_input_path)) {
+            return;
+        }
+        state->config_input_path[length] = (char)codepoint;
+        state->config_input_path[length + 1u] = '\0';
         return;
     }
     if (state->modal == PROGTP_APP_MODAL_ADD_INCIDENT || state->modal == PROGTP_APP_MODAL_UPDATE_INCIDENT) {
@@ -806,6 +977,12 @@ static void PrepareText(ProgTP_AppState *state) {
             sizeof(state->summary_text),
             "%s",
             "Manage incident queue, track technical work, and auto-import from monitoring logs");
+    } else if (state->active_module == 5) {
+        snprintf(
+            state->summary_text,
+            sizeof(state->summary_text),
+            "%s",
+            "Review configuration changes, undo and redo up to the last 25 equipment mutations");
     } else {
         snprintf(
             state->summary_text,
@@ -863,6 +1040,7 @@ static void PrepareText(ProgTP_AppState *state) {
     PrepareConnectivityText(state);
     PrepareSensorText(state);
     PrepareIncidentText(state);
+    PrepareConfigText(state);
 }
 
 static void MainModule(ProgTP_AppState *state) {
@@ -874,6 +1052,8 @@ static void MainModule(ProgTP_AppState *state) {
         SensorModule(state);
     } else if (state->active_module == 4) {
         IncidentModule(state);
+    } else if (state->active_module == 5) {
+        ConfigModule(state);
     } else {
         PlaceholderModule(state->active_module);
     }

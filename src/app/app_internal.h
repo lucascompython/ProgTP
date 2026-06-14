@@ -10,6 +10,7 @@
 #define PROGTP_UI_SENSOR_SELECT_BASE 2000u
 #define PROGTP_UI_INCIDENT_SELECT_BASE 5000u
 #define PROGTP_UI_INCIDENT_FORM_FIELD_BASE 6000u
+#define PROGTP_UI_CONFIG_SELECT_BASE 7000u
 #define PROGTP_UI_FORM_FIELD_BASE 3000u
 #define PROGTP_UI_FORM_STATE_BASE 4000u
 #define PROGTP_VISIBLE_ROWS 12u
@@ -53,6 +54,10 @@ void ConfirmRemoveSelected(ProgTP_AppState *state);
 void CloseModal(ProgTP_AppState *state);
 void OpenSensorFileModal(ProgTP_AppState *state);
 void SubmitSensorFile(ProgTP_AppState *state);
+void OpenConfigFileModal(ProgTP_AppState *state);
+void SubmitConfigFile(ProgTP_AppState *state);
+void OpenRemoveConfigModal(ProgTP_AppState *state);
+void ConfirmRemoveConfig(ProgTP_AppState *state);
 
 bool MatchesCurrentView(const ProgTP_AppState *state, const ProgTP_Equipment *equipment);
 
@@ -95,6 +100,11 @@ void OpenUpdateIncidentModal(ProgTP_AppState *state);
 void OpenRemoveIncidentModal(ProgTP_AppState *state);
 void SubmitIncidentForm(ProgTP_AppState *state);
 void ConfirmRemoveIncident(ProgTP_AppState *state);
+
+void PrepareConfigText(ProgTP_AppState *state);
+void MoveConfigSelection(ProgTP_AppState *state, int direction);
+void PageConfig(ProgTP_AppState *state, int direction);
+void ConfigModule(ProgTP_AppState *state);
 
 int32_t CStringLength(const char *value);
 Clay_String StringFromCString(const char *value);
