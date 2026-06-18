@@ -272,11 +272,11 @@ Main actions:
 ## 7. Useful development commands
 
 ```sh
-rtk meson compile -C build
-rtk meson compile -C build lint
-rtk ./build/progtp-native
-rtk ./build/progtp-tui
-rtk ./build/progtp-server --port 8000 --public build
+meson compile -C build
+meson compile -C build lint
+./build/progtp-native
+./build/progtp-tui
+./build/progtp-server --port 8000 --public build
 ```
 
 ## TODO:
