@@ -323,6 +323,9 @@ bool HandleModalAction(ProgTP_AppState *state, ProgTP_AppAction action) {
                 }
                 return true;
             }
+            case PROGTP_APP_ACTION_SENSOR_CLEAR_PATH:
+                state->sensor_input_path[0] = '\0';
+                return true;
             case PROGTP_APP_ACTION_INPUT_SUBMIT:
             case PROGTP_APP_ACTION_FORM_SUBMIT: SubmitSensorFile(state); return true;
             case PROGTP_APP_ACTION_FORM_CANCEL: CloseModal(state); SetStatus(state, "Canceled"); return true;
@@ -595,6 +598,7 @@ static void SensorFileModal(ProgTP_AppState *state) {
         }) {
             TextLine(state->sensor_input_path, 13, COLOR_TEXT);
         }
+        TextLine("Enter path (absolute or relative). Empty = sensores_rack.txt", 12, COLOR_MUTED);
         TextLine("Press Enter to confirm or Esc to cancel", 12, COLOR_MUTED);
         CLAY(CLAY_ID("SensorFileActions"), {
             .layout = {
@@ -604,6 +608,7 @@ static void SensorFileModal(ProgTP_AppState *state) {
             },
         }) {
             Button(520, "Cancel", PROGTP_APP_ACTION_FORM_CANCEL, false, false);
+            Button(522, "Clear", PROGTP_APP_ACTION_SENSOR_CLEAR_PATH, false, false);
             Button(521, "Save", PROGTP_APP_ACTION_FORM_SUBMIT, true, false);
         }
     }

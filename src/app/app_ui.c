@@ -173,8 +173,17 @@ void ModuleButton(ProgTP_AppState *state, int module) {
     }
 }
 
+static uint32_t MetricId(const char *label, const char *value) {
+    uint32_t hash = 0;
+    for (const char *p = label; *p; ++p) {
+        hash = hash * 31u + (uint32_t)(unsigned char)*p;
+    }
+    hash = hash * 31u + (uint32_t)CStringLength(value);
+    return hash;
+}
+
 void Metric(const char *label, const char *value) {
-    CLAY(CLAY_IDI("Metric", (uint32_t)CStringLength(label) * 17u + (uint32_t)CStringLength(value)), {
+    CLAY(CLAY_IDI("Metric", MetricId(label, value)), {
         .layout = {
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
             .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },

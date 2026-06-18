@@ -1001,6 +1001,7 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
         case PROGTP_APP_ACTION_NONE:
         case PROGTP_APP_ACTION_INPUT_BACKSPACE:
         case PROGTP_APP_ACTION_INPUT_SUBMIT:
+        case PROGTP_APP_ACTION_SENSOR_CLEAR_PATH:
             break;
     }
     EnsureSelection(state);
