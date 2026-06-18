@@ -309,7 +309,7 @@ typedef struct {
     size_t files_row_offset;
     size_t files_selected_index;
     uint32_t files_filter_state;
-    char files_preview_lines[128][192];
+    char files_preview_lines[128][256];
     size_t files_preview_line_count;
     bool files_needs_refresh;
     bool files_preview_loaded;

@@ -849,8 +849,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             if (ProgTP_GenerateNetworkStatusReport(&state->inventory, &state->incidents, &state->sensors, filename, error, sizeof(error))) {
                 state->files_needs_refresh = true;
                 state->files_preview_loaded = false;
-                char msg[128];
-                snprintf(msg, sizeof(msg), "Network status report generated: %s", filename);
+                char msg[160];
+                snprintf(msg, sizeof(msg), "Network status report generated: %.95s", filename);
                 SetStatus(state, msg);
             } else {
                 SetStatus(state, error);
@@ -873,8 +873,8 @@ void ProgTP_AppHandleAction(ProgTP_AppState *state, ProgTP_AppAction action) {
             if (ProgTP_GenerateIncidentReport(&state->incidents, filename, error, sizeof(error))) {
                 state->files_needs_refresh = true;
                 state->files_preview_loaded = false;
-                char msg[128];
-                snprintf(msg, sizeof(msg), "Incident report generated: %s", filename);
+                char msg[160];
+                snprintf(msg, sizeof(msg), "Incident report generated: %.95s", filename);
                 SetStatus(state, msg);
             } else {
                 SetStatus(state, error);

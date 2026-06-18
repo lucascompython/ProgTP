@@ -41,7 +41,7 @@ typedef struct {
 
 static FileEntry g_files[FILES_ENTRY_COUNT];
 static size_t g_files_count;
-static char g_preview_buf[FILES_PREVIEW_MAX][192];
+static char g_preview_buf[FILES_PREVIEW_MAX][256];
 static size_t g_preview_count;
 static char g_report_network_path[96];
 static char g_report_incident_path[96];
@@ -151,7 +151,7 @@ static bool ReadBinaryPreview(const char *path, size_t record_size, char *error,
         snprintf(
             g_preview_buf[g_preview_count],
             sizeof(g_preview_buf[g_preview_count]),
-            "#%u | %s | %s | %s %s | IP %s | %s",
+            "#%u | %.63s | %.31s | %.31s %.31s | IP %.45s | %.11s",
             equipment.code,
             equipment.name,
             equipment.type,
@@ -201,11 +201,6 @@ static void GeneratePreview(size_t index, char *error, size_t error_size) {
         return;
     }
     if (entry->descriptor->is_binary) {
-        size_t record_size = 0;
-        if (entry->size > sizeof(GenericBinaryHeader)) {
-            record_size = (entry->size - sizeof(GenericBinaryHeader)) /
-                (entry->size > sizeof(GenericBinaryHeader) + 396u ? 1u : 1u);
-        }
         if (!ReadBinaryPreview(entry->descriptor->path, 0, error, error_size)) {
             return;
         }
@@ -370,7 +365,7 @@ void PrepareFilesText(ProgTP_AppState *state) {
                         g_preview_buf[i]);
                 }
             } else if (error[0] != '\0') {
-                snprintf(state->files_preview_lines[0], sizeof(state->files_preview_lines[0]), "%s", error);
+                snprintf(state->files_preview_lines[0], sizeof(state->files_preview_lines[0]), "%.191s", error);
                 state->files_preview_line_count = 1;
             } else {
                 state->files_preview_line_count = 0;
